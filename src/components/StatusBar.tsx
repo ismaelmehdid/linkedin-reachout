@@ -1,11 +1,17 @@
 'use client';
 
 import { useActionState } from 'react';
-import { toggleRunningAction } from '@/app/actions';
+import { setRunningAction } from '@/app/actions';
 import type { Usage } from '@/lib/engine/usage';
 import type { Settings } from '@/lib/settings/settings';
 
-const INITIAL_TOGGLE: { blockers: string[] } = { blockers: [] };
+const INITIAL_RESULT: { blockers: string[] } = { blockers: [] };
+
+// Each button asks for a state, never a toggle. Bound once here, not on each render: after a form post
+// without JavaScript, React checks the bound action's signature and waits for its arguments, and a new
+// binding on every render would make that wait start over forever.
+const startAction = setRunningAction.bind(null, true);
+const pauseAction = setRunningAction.bind(null, false);
 
 type Props = {
   counts: { status: string; count: number }[];
@@ -16,7 +22,7 @@ type Props = {
 };
 
 export function StatusBar({ counts, usage, caps, banners, running }: Props) {
-  const [toggle, toggleAction, pending] = useActionState(toggleRunningAction, INITIAL_TOGGLE);
+  const [result, runningAction, pending] = useActionState(running ? pauseAction : startAction, INITIAL_RESULT);
   const usageLine = [
     `Invites today ${usage.invitesToday}/${caps.invitesPerDay}`,
     `7 days ${usage.invitesLast7Days}/${caps.invitesPerWeek}`,
@@ -34,7 +40,7 @@ export function StatusBar({ counts, usage, caps, banners, running }: Props) {
 
       <div className="flex flex-wrap items-center gap-3">
         <span className="font-medium">{running ? 'Running' : 'Paused'}</span>
-        <form action={toggleAction}>
+        <form action={runningAction}>
           <button
             type="submit"
             disabled={pending}
@@ -44,10 +50,10 @@ export function StatusBar({ counts, usage, caps, banners, running }: Props) {
           </button>
         </form>
       </div>
-      {toggle.blockers.length > 0 && (
+      {result.blockers.length > 0 && (
         <ul role="alert" className="list-disc pl-5 text-sm text-red-600">
           {/* Two issues can read the same, so the position is the key. */}
-          {toggle.blockers.map((blocker, i) => (
+          {result.blockers.map((blocker, i) => (
             <li key={i}>{blocker}</li>
           ))}
         </ul>

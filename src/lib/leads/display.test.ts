@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { Lead } from '@/db/schema';
 import { NOW } from '@/test-utils/engine';
-import { dashboardBanners, describeNextAction, formatImportSummary, formatLocal, leadDisplayName } from './display';
+import {
+  dashboardBanners,
+  describeNextAction,
+  formatImportSummary,
+  formatLocal,
+  leadDisplayName,
+  leadRoleLine,
+} from './display';
 
 const D = new Date('2026-11-19T09:00:00Z');
 const make = (patch: Partial<Lead>) =>
@@ -28,6 +35,15 @@ describe('lead display', () => {
     expect(leadDisplayName(make({ firstName: 'Jane' }))).toBe('Jane');
     expect(leadDisplayName(make({}))).toBe('jane-doe');
     expect(formatLocal(new Date('2026-11-17T07:30:00Z'), 'Europe/Paris')).toBe('2026-11-17 08:30');
+  });
+
+  it('describes the current role from position and company', () => {
+    expect(leadRoleLine({ position: 'CTO', company: 'Acme' })).toBe('CTO at Acme');
+    expect(leadRoleLine({ position: null, company: 'Acme' })).toBe('Acme');
+    expect(leadRoleLine({ position: 'CTO', company: null })).toBe('CTO');
+    expect(leadRoleLine({ position: null, company: '  ' })).toBeNull();
+    expect(leadRoleLine({ position: ' CTO ', company: '' })).toBe('CTO');
+    expect(leadRoleLine({ position: null, company: null })).toBeNull();
   });
 
   it('summarizes an import', () => {

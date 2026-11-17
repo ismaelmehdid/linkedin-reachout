@@ -7,7 +7,7 @@ import { leadStatus, type Lead, type LeadStatus } from '@/db/schema';
 import { getAppState } from '@/lib/engine/state';
 import { getUsage } from '@/lib/engine/usage';
 import { getEnv } from '@/lib/env';
-import { dashboardBanners, describeNextAction, formatLocal, leadDisplayName } from '@/lib/leads/display';
+import { dashboardBanners, describeNextAction, formatLocal, leadDisplayName, leadRoleLine } from '@/lib/leads/display';
 import { countLeadsByStatus, LEAD_LIST_LIMIT, listLeads, listRecentEvents } from '@/lib/leads/repo';
 import { getSettings } from '@/lib/settings/repo';
 
@@ -26,6 +26,7 @@ function toLeadRow(lead: Lead, timezone: string): LeadRow {
     id: lead.id,
     name: leadDisplayName(lead),
     headline: lead.headline,
+    role: leadRoleLine(lead),
     linkedinUrl: lead.linkedinUrl,
     status: lead.status,
     failureReason: lead.failureReason,

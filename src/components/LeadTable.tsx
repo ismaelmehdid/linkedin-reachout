@@ -10,6 +10,7 @@ export type LeadRow = {
   id: number;
   name: string;
   headline: string | null;
+  role: string | null;
   linkedinUrl: string;
   status: string;
   failureReason: string | null;
@@ -119,6 +120,7 @@ export function LeadTable({ rows, statuses, activeStatus }: { rows: LeadRow[]; s
                 <td className="py-2 pr-3">
                   <div>{row.name}</div>
                   {row.headline && <Muted>{row.headline}</Muted>}
+                  {row.role !== null && <Muted>{row.role}</Muted>}
                 </td>
                 <td className="py-2 pr-3">
                   <a href={row.linkedinUrl} target="_blank" rel="noopener noreferrer" className="underline">

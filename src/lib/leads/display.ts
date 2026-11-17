@@ -25,6 +25,17 @@ export function leadDisplayName(lead: Pick<Lead, 'firstName' | 'lastName' | 'slu
   return [lead.firstName, lead.lastName].filter(Boolean).join(' ') || lead.slug;
 }
 
+/**
+ * The current role read from LinkedIn, `<position> at <company>`, or the one of them that is present.
+ * Null when neither is: an empty or blank value counts as absent.
+ */
+export function leadRoleLine(lead: Pick<Lead, 'position' | 'company'>): string | null {
+  const position = lead.position?.trim() || null;
+  const company = lead.company?.trim() || null;
+  if (position && company) return `${position} at ${company}`;
+  return position ?? company;
+}
+
 /** `yyyy-MM-dd HH:mm` in `timezone`. */
 export function formatLocal(date: Date, timezone: string): string {
   return DateTime.fromJSDate(date, { zone: timezone }).toFormat('yyyy-MM-dd HH:mm');
