@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { leads } from '@/db/schema';
+import { saveSettings } from '@/lib/settings/repo';
 import { UnipileError } from '@/lib/unipile/errors';
 import { createTestEngine, getLead, listEvents, NOW, seedEvents, seedLead, type TestEngine } from '@/test-utils/engine';
 import { makeProfile } from '@/test-utils/fake-unipile';
@@ -76,6 +77,33 @@ describe('tick', () => {
     e.deps.sleep = async () => { await e.db.update(leads).set({ nextActionAt: new Date('2026-11-19T09:00:00Z') }).where(eq(leads.id, lead.id)); };
     expect((await runTick(e.deps)).action).toEqual({ leadId: lead.id, result: 'superseded' });
     expect(methods()).toEqual([]);
+  });
+  it('sends nothing when the app was paused during the random wait', async () => {
+    await acceptedDue();
+    e.deps.sleep = async () => { await setRunning(e.db, false); };
+    expect(await runTick(e.deps)).toMatchObject({ status: 'paused', action: null });
+    expect(methods()).toEqual([]);
+  });
+  it('uses the templates saved during the random wait', async () => {
+    await acceptedDue();
+    e.deps.sleep = async () => { await saveSettings(e.db, { ...e.settings, templates: { ...e.settings.templates, firstMessage: 'Hello {{first_name}}' } }); };
+    await runTick(e.deps);
+    expect(e.fake.calls).toEqual([{ method: 'startChat', args: ['ACoBob', 'Hello Bob'] }]);
+  });
+  it('sends nothing when the active window closed during the random wait', async () => {
+    e.setNow(new Date('2026-11-17T17:59:30Z')); await acceptedDue();
+    e.deps.sleep = async () => { e.setNow(new Date('2026-11-17T18:00:30Z')); };
+    expect((await runTick(e.deps)).action).toBeNull();
+    expect(methods()).toEqual([]);
+  });
+  it('skips the outreach action when housekeeping used up the time budget', async () => {
+    await seedLead(e.db, { status: 'invite_sent', providerId: 'ACoSlow', acceptanceCheckPending: true, inviteSentAt: NOW, nextActionAt: new Date('2026-12-08T09:00:00Z') });
+    e.fake.profiles.set('ACoSlow', makeProfile({ providerId: 'ACoSlow' }));
+    await updateAppState(e.db, { nextInvitePollAt: new Date(NOW.getTime() + 3_600_000) });
+    e.fake.onCall('getProfile', async () => { e.setNow(new Date(NOW.getTime() + 31_000)); });
+    await acceptedDue();
+    expect((await runTick(e.deps)).action).toBeNull();
+    expect(methods()).toEqual(['getProfile']);
   });
   it('runs the action on the lead as it is after the random wait', async () => {
     const lead = await acceptedDue();

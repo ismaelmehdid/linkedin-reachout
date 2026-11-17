@@ -19,6 +19,14 @@ import { getUsage, remainingCapacity, type Remaining } from './usage';
  */
 export const TICK_LEASE_MS = 240_000;
 
+/**
+ * The outreach action starts only if housekeeping ended within this time of the tick's start. The HTTP
+ * function that runs a tick is killed at 180 s, and a kill between a send and its database write could send
+ * the same message again on the next tick. 30 s of housekeeping + at most 90 s of random wait + one action
+ * (two Unipile calls of at most 20 s each) = 160 s, below 180 s.
+ */
+export const OUTREACH_START_BUDGET_MS = 30_000;
+
 export type TickResult = {
   status: 'locked' | 'paused' | 'outside_window' | 'done';
   finished: number;
@@ -61,13 +69,41 @@ async function pickAction(db: Db, state: AppState, remaining: Remaining, now: Da
 /**
  * The picked lead as it is after the random wait, or null when it no longer qualifies: deleted, paused,
  * moved to another status (a reply, or a manual message before the first message), or no longer due
- * (a manual message after the first message moves `nextActionAt` and keeps the status).
+ * at `pickedAt` (a manual message after the first message moves `nextActionAt` and keeps the status).
  */
-async function rereadPickedLead(db: Db, picked: Lead, now: Date): Promise<Lead | null> {
+async function rereadPickedLead(db: Db, picked: Lead, pickedAt: Date): Promise<Lead | null> {
   const [lead] = await db.select().from(leads).where(eq(leads.id, picked.id));
   if (!lead || lead.paused || lead.status !== picked.status) return null;
-  if (lead.nextActionAt === null || lead.nextActionAt > now) return null;
+  if (lead.nextActionAt === null || lead.nextActionAt > pickedAt) return null;
   return lead;
+}
+
+/**
+ * Runs the picked action after the random wait, checking again what the wait may have changed: the app or
+ * the action's type paused, the settings saved, the window closed, or the lead changed.
+ */
+async function runAfterWait(
+  deps: EngineDeps,
+  picked: PickedAction,
+  pickedAt: Date,
+): Promise<{ status: 'paused' | 'outside_window' | 'done'; action: ActionOutcome | null }> {
+  const { db } = deps;
+  const now = deps.now();
+  const state = await getAppState(db);
+  if (!state.running) return { status: 'paused', action: null };
+  const pausedUntil = picked.kind === 'message' ? state.messagesPausedUntil : state.invitesPausedUntil;
+  if (isPausedAfter(pausedUntil, now)) return { status: 'done', action: null };
+
+  const settings = await getSettings(db);
+  if (!isInActiveWindow(now, settings.window)) return { status: 'outside_window', action: null };
+
+  const lead = await rereadPickedLead(db, picked.lead, pickedAt);
+  if (lead === null) return { status: 'done', action: { leadId: picked.lead.id, result: 'superseded' } };
+  const action =
+    picked.kind === 'message'
+      ? await runMessageAction(deps, lead, picked.step, settings)
+      : await runInviteAction(deps, lead, settings);
+  return { status: 'done', action };
 }
 
 async function runLockedTick(deps: EngineDeps, now: Date): Promise<TickResult> {
@@ -87,20 +123,14 @@ async function runLockedTick(deps: EngineDeps, now: Date): Promise<TickResult> {
 
   const state = await getAppState(db);
   if (!state.running) return { status: 'paused', finished, action: null };
+  // Housekeeping ran long: the wait and an action might not finish before the function is killed.
+  if (deps.now().getTime() - now.getTime() > OUTREACH_START_BUDGET_MS) return { status: 'done', finished, action: null };
 
   const picked = await pickAction(db, state, await readRemaining(), now);
   if (picked === null) return { status: 'done', finished, action: null };
 
   await deps.sleep(Math.floor(deps.random() * settings.caps.jitterMaxSeconds * 1000));
-
-  // A reply, a manual message or a pause can land during the wait; the action runs on the lead as it is now.
-  const lead = await rereadPickedLead(db, picked.lead, now);
-  if (lead === null) return { status: 'done', finished, action: { leadId: picked.lead.id, result: 'superseded' } };
-  const action =
-    picked.kind === 'message'
-      ? await runMessageAction(deps, lead, picked.step, settings)
-      : await runInviteAction(deps, lead, settings);
-  return { status: 'done', finished, action };
+  return { ...(await runAfterWait(deps, picked, now)), finished };
 }
 
 /**
