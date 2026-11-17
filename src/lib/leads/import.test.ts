@@ -54,4 +54,14 @@ describe('importLeads', () => {
         },
       ],
     }));
+
+  it('does not throw when two imports of the same profile overlap', async () => {
+    const results = await Promise.all([
+      importLeads(db, 'linkedin.com/in/a', NOW),
+      importLeads(db, 'linkedin.com/in/a', NOW),
+    ]);
+    expect(results.reduce((sum, r) => sum + r.added, 0)).toBe(1);
+    expect(results.filter((r) => r.duplicates.length === 1 && r.duplicates[0] === 'a')).toHaveLength(1);
+    expect(await db.select().from(leads)).toHaveLength(1);
+  });
 });

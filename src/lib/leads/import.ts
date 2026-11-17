@@ -53,16 +53,25 @@ export async function importLeads(db: Db, text: string, now: Date): Promise<Impo
     return true;
   });
 
-  if (fresh.length > 0) {
-    await db.insert(leads).values(
+  if (fresh.length === 0) return { added: 0, duplicates, invalid };
+
+  // A concurrent import may insert the same slug between the check above and this insert.
+  const inserted = await db
+    .insert(leads)
+    .values(
       fresh.map((c) => ({
         slug: c.slug,
         linkedinUrl: c.url,
         status: 'queued' as const,
         nextActionAt: now,
       })),
-    );
+    )
+    .onConflictDoNothing()
+    .returning({ slug: leads.slug });
+  const insertedKeys = new Set(inserted.map((row) => row.slug.toLowerCase()));
+  for (const c of fresh) {
+    if (!insertedKeys.has(c.slug.toLowerCase())) duplicates.push(c.slug);
   }
 
-  return { added: fresh.length, duplicates, invalid };
+  return { added: inserted.length, duplicates, invalid };
 }

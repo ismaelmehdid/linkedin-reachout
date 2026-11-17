@@ -34,4 +34,24 @@ describe('parseLinkedInProfileUrl', () => {
   ])('rejects %s', (input, error) =>
     expect(parseLinkedInProfileUrl(input)).toEqual({ ok: false, error }),
   );
+
+  it.each(['https://www.linkedin.com/in/jane-doe/en', 'linkedin.com/in/jane-doe/fr/'])(
+    'ignores a two-letter language suffix in %s',
+    (input) =>
+      expect(parseLinkedInProfileUrl(input)).toEqual({
+        ok: true,
+        slug: 'jane-doe',
+        url: 'https://www.linkedin.com/in/jane-doe',
+      }),
+  );
+
+  it.each([
+    'https://www.linkedin.com/in/jane-doe/eng',
+    'https://www.linkedin.com/in/jane-doe/en/extra',
+  ])('rejects extra path segments in %s', (input) =>
+    expect(parseLinkedInProfileUrl(input)).toEqual({
+      ok: false,
+      error: 'not a profile URL (expected linkedin.com/in/...)',
+    }),
+  );
 });

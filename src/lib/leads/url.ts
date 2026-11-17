@@ -20,7 +20,7 @@ export function parseLinkedInProfileUrl(input: string): ParsedLinkedInUrl {
   }
   if (!LINKEDIN_HOST.test(parsed.hostname)) return { ok: false, error: NOT_LINKEDIN };
 
-  const match = /^\/in\/([^/]+)\/?$/.exec(parsed.pathname);
+  const match = /^\/in\/([^/]+)(?:\/[a-z]{2})?\/?$/i.exec(parsed.pathname);
   if (!match) return { ok: false, error: NOT_PROFILE };
 
   let slug: string;
