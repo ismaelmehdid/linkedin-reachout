@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { UnipileError } from './errors';
+import { positiveSeconds, UnipileError } from './errors';
 import type { ChatMessage, NetworkDistance, SentInvitation, UnipileClient, UnipileProfile } from './types';
 
 const NETWORK_DISTANCES: readonly string[] = ['FIRST_DEGREE', 'SECOND_DEGREE', 'THIRD_DEGREE', 'OUT_OF_NETWORK'];
@@ -71,6 +71,18 @@ function idOrNull(data: unknown, key: string): string | null {
   return typeof value === 'string' && value !== '' ? value : null;
 }
 
+/**
+ * What a failed `fetch` says. Its own message is only "fetch failed"; the cause names what went wrong,
+ * such as ENOTFOUND for a wrong DSN: its code when it has one, else its message.
+ */
+function describeNetworkError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const cause: unknown = err.cause;
+  const parts = typeof cause === 'object' && cause !== null ? (cause as { code?: unknown; message?: unknown }) : { message: cause };
+  const detail = [parts.code, parts.message].find((part): part is string => typeof part === 'string' && part !== '');
+  return detail === undefined ? err.message : `${err.message}: ${detail}`;
+}
+
 function parseOrThrow<T>(schema: z.ZodType<T>, data: unknown): T {
   const result = schema.safeParse(data);
   if (!result.success) {
@@ -125,7 +137,7 @@ export function createUnipileClient(opts: {
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
-      throw new UnipileError(0, 'network_error', err instanceof Error ? err.message : String(err));
+      throw new UnipileError(0, 'network_error', describeNetworkError(err));
     }
 
     if (!res.ok) throw await toError(res);
@@ -144,13 +156,8 @@ export function createUnipileClient(opts: {
     } catch {
       // Body is not JSON: keep type null.
     }
-    const headerValue = Number(res.headers.get('retry-after'));
-    const retryAfter =
-      typeof body.retry_after === 'number'
-        ? body.retry_after
-        : res.headers.get('retry-after') !== null && Number.isFinite(headerValue)
-          ? headerValue
-          : null;
+    // `Number` gives 0 for a missing or empty header and NaN for an HTTP date: neither is a delay.
+    const retryAfter = positiveSeconds(body.retry_after) ?? positiveSeconds(Number(res.headers.get('retry-after')));
     const message = [body.detail, body.title].find((v): v is string => typeof v === 'string' && v !== '');
     return new UnipileError(
       res.status,

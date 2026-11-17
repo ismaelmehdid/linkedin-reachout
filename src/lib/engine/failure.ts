@@ -3,7 +3,7 @@ import { events, leads, type Lead, type NewLead } from '@/db/schema';
 import type { Db } from '@/db/types';
 import { nextActiveDayStart } from '@/lib/schedule/window';
 import type { Settings } from '@/lib/settings/settings';
-import { classifyUnipileError, UnipileError } from '@/lib/unipile/errors';
+import { classifyUnipileError, positiveSeconds, UnipileError } from '@/lib/unipile/errors';
 import type { EngineDeps } from './deps';
 import { logEvent } from './events';
 import { incrementErrorStreak, pauseApp, pauseForAccountError, updateAppState } from './state';
@@ -103,7 +103,8 @@ export async function handleActionError(
   const reason = type ?? `http_${status}`;
   switch (classifyUnipileError(err)) {
     case 'limit': {
-      const retryAfterSeconds = err instanceof UnipileError ? err.retryAfterSeconds : null;
+      // A delay of 0 would end the pause at once, so only a real delay replaces the next active day.
+      const retryAfterSeconds = err instanceof UnipileError ? positiveSeconds(err.retryAfterSeconds) : null;
       const until =
         retryAfterSeconds !== null
           ? new Date(now.getTime() + retryAfterSeconds * 1000)

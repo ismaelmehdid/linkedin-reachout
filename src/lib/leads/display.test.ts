@@ -4,6 +4,7 @@ import { NOW } from '@/test-utils/engine';
 import {
   dashboardBanners,
   describeNextAction,
+  eventDetail,
   formatImportSummary,
   formatLocal,
   leadDisplayName,
@@ -65,6 +66,42 @@ describe('lead display', () => {
       }),
     ).toBe('0 added · 2 already contacted: a, b · 2 invalid: x (e1), y (e2)');
     expect(formatImportSummary({ added: 3, duplicates: [], invalid: [] })).toBe('3 added');
+  });
+
+  it('says why an action failed: its kind, its error type or HTTP status, and its message', () => {
+    const failed = (payload: unknown) => eventDetail({ type: 'action_failed', payload });
+    expect(failed({ kind: 'invite', status: 422, type: 'errors/cannot_invite_attendee', message: 'Recipient cannot be reached' })).toBe(
+      'invite · errors/cannot_invite_attendee · Recipient cannot be reached',
+    );
+    expect(failed({ kind: 'message', status: 503, type: null, message: 'down' })).toBe('message · http_503 · down');
+    expect(failed({ kind: 'invite_poll', status: 0, type: 'network_error', message: 'fetch failed: ENOTFOUND' })).toBe(
+      'invite_poll · network_error · fetch failed: ENOTFOUND',
+    );
+    expect(failed({ kind: 'invite', status: null, type: null, message: 'bug' })).toBe('invite · bug');
+    expect(failed({})).toBeNull();
+  });
+
+  it('says which webhook arrived and what it led to', () => {
+    const webhook = (payload: unknown) => eventDetail({ type: 'webhook_received', payload });
+    expect(webhook({ event: 'message_received', outcome: 'replied' })).toBe('message_received: replied');
+    expect(webhook({ event: null, outcome: 'ignored' })).toBe('unknown event: ignored');
+    expect(webhook({})).toBeNull();
+  });
+
+  it('shows the text of an invite or a message: sent, would send in a dry run, or found already sent', () => {
+    expect(eventDetail({ type: 'invite_sent', payload: { text: 'Hi Jane', dryRun: false } })).toBe('sent: Hi Jane');
+    expect(eventDetail({ type: 'message_sent', payload: { step: 'followup_1', text: 'Bump Jane', dryRun: false } })).toBe('sent: Bump Jane');
+    expect(eventDetail({ type: 'invite_sent', payload: { text: 'Hi Jane', dryRun: true } })).toBe('would send: Hi Jane');
+    expect(eventDetail({ type: 'message_sent', payload: { step: 'followup_1', text: 'Bump Jane', dryRun: false, recovered: true } })).toBe(
+      'recorded (already sent): Bump Jane',
+    );
+    expect(eventDetail({ type: 'message_sent', payload: {} })).toBeNull();
+  });
+
+  it('adds nothing to the other events', () => {
+    for (const type of ['profile_view', 'invite_withdrawn', 'invite_missing'] as const) {
+      expect(eventDetail({ type, payload: { invitationId: 'inv_1' } }), type).toBeNull();
+    }
   });
 
   it('lists the banners: dry run or live, auto-pause reason, and pauses that have not ended', () => {

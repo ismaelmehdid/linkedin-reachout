@@ -10,6 +10,14 @@ export class UnipileError extends Error {
   }
 }
 
+/**
+ * A retry delay counts only as a finite number of seconds above 0. Anything else (0, a negative or
+ * unreadable value, an empty header) is no delay at all, and the pause then runs to the next active day.
+ */
+export function positiveSeconds(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null;
+}
+
 /** `account`: Unipile refused the account itself (disconnected, expired credentials, no subscription), not one lead. */
 export type ErrorClass =
   | 'limit'

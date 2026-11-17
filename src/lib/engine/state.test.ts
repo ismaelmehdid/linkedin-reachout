@@ -32,11 +32,25 @@ describe('app state', () => {
       consecutiveErrors: 0,
     }));
 
+  const leaseUntil = (start: Date) => new Date(start.getTime() + 240_000);
+
   it('gives the lock to one tick at a time', async () => {
     expect(await acquireTickLock(db, NOW, 240_000)).toBe(true);
     expect(await acquireTickLock(db, NOW, 240_000)).toBe(false);
-    await releaseTickLock(db);
+    await releaseTickLock(db, leaseUntil(NOW));
     expect(await acquireTickLock(db, NOW, 240_000)).toBe(true);
+  });
+
+  it('releases only the lease it took', async () => {
+    const stale = new Date(NOW.getTime() - 300_000);
+    // A tick that outlived its lease: another tick has taken the lock since.
+    await acquireTickLock(db, stale, 240_000);
+    expect(await acquireTickLock(db, NOW, 240_000)).toBe(true);
+    await releaseTickLock(db, leaseUntil(stale));
+    expect((await getAppState(db)).tickLockUntil).toEqual(leaseUntil(NOW));
+    expect(await acquireTickLock(db, NOW, 240_000)).toBe(false);
+    await releaseTickLock(db, leaseUntil(NOW));
+    expect((await getAppState(db)).tickLockUntil).toBeNull();
   });
 
   it('takes over an expired lease', async () => {

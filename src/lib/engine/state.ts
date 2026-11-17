@@ -36,6 +36,16 @@ export async function updateAppState(db: Db, patch: Partial<Omit<AppState, 'id'>
     .onConflictDoUpdate({ target: appStateTable.id, set: patch });
 }
 
+/** A small read of a real table: it fails when the database is down, suspended or not migrated. */
+export async function pingDatabase(db: Db): Promise<void> {
+  await db.select({ id: appStateTable.id }).from(appStateTable).limit(1);
+}
+
+/** When a lease taken at `now` runs out. It also names the lease: `releaseTickLock` frees only this one. */
+export function tickLeaseEnd(now: Date, leaseMs: number): Date {
+  return new Date(now.getTime() + leaseMs);
+}
+
 /**
  * Takes the tick lease with one conditional update, so two ticks can never both get it.
  * An expired lease (a crashed tick) is taken over.
@@ -44,14 +54,21 @@ export async function acquireTickLock(db: Db, now: Date, leaseMs: number): Promi
   await ensureAppStateRow(db);
   const taken = await db
     .update(appStateTable)
-    .set({ tickLockUntil: new Date(now.getTime() + leaseMs) })
+    .set({ tickLockUntil: tickLeaseEnd(now, leaseMs) })
     .where(and(isAppStateRow, or(isNull(appStateTable.tickLockUntil), lt(appStateTable.tickLockUntil, now))))
     .returning({ id: appStateTable.id });
   return taken.length > 0;
 }
 
-export async function releaseTickLock(db: Db): Promise<void> {
-  await updateAppState(db, { tickLockUntil: null });
+/**
+ * Releases the lease that ends at `leaseUntil`, and only that one: a tick that outlived its lease must
+ * not free the lock that another tick has taken since.
+ */
+export async function releaseTickLock(db: Db, leaseUntil: Date): Promise<void> {
+  await db
+    .update(appStateTable)
+    .set({ tickLockUntil: null })
+    .where(and(isAppStateRow, eq(appStateTable.tickLockUntil, leaseUntil)));
 }
 
 /** Starting clears the auto-pause reason and the error streak. */

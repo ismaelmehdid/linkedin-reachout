@@ -9,14 +9,14 @@ import type { ActionOutcome } from './failure';
 import { expireOneInvite, finishDueLeads, runAcceptanceChecks, runInvitePollIfDue } from './housekeeping';
 import { runInviteAction } from './invite';
 import { runMessageAction } from './message';
-import { acquireTickLock, getAppState, releaseTickLock, type AppState } from './state';
+import { acquireTickLock, getAppState, releaseTickLock, tickLeaseEnd, type AppState } from './state';
 import { MESSAGE_STEP_BY_STATUS, type MessageStep } from './steps';
 import { getUsage, remainingCapacity, type Remaining } from './usage';
 
 /**
- * How long a tick holds the lock: 240 000 ms on purpose. `releaseTickLock` is unconditional, which is safe
- * only because the HTTP function that runs a tick is killed after 180 s, before this lease can expire.
- * If a tick outlived its lease, the next tick could take the lock and this tick's release would free it.
+ * How long a tick holds the lock: 240 000 ms on purpose. The HTTP function that runs a tick is killed
+ * after 180 s, before this lease can expire, so a second tick never starts while one is still running.
+ * A tick also releases only its own lease, so even one that outlived it could not free another tick's lock.
  */
 export const TICK_LEASE_MS = 240_000;
 
@@ -158,6 +158,6 @@ export async function runTick(deps: EngineDeps): Promise<TickResult> {
   try {
     return await runLockedTick(deps, now);
   } finally {
-    await releaseTickLock(deps.db);
+    await releaseTickLock(deps.db, tickLeaseEnd(now, TICK_LEASE_MS));
   }
 }

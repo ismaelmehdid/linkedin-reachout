@@ -1,5 +1,5 @@
 import { DateTime } from 'luxon';
-import type { Lead } from '@/db/schema';
+import type { EventRow, Lead } from '@/db/schema';
 import type { AppState } from '@/lib/engine/state';
 import { nextStep, type StepKind } from '@/lib/engine/steps';
 import type { ImportResult } from './import';
@@ -51,6 +51,36 @@ export function formatImportSummary(result: ImportResult): string {
     parts.push(`${result.invalid.length} invalid: ${result.invalid.map((i) => `${i.line} (${i.error})`).join(', ')}`);
   }
   return parts.join(' · ');
+}
+
+/**
+ * The line under an event in the log: why an action failed, which webhook arrived and what it led to, or
+ * the text of an invite or a message. Null for an event with nothing more to say.
+ */
+export function eventDetail(event: Pick<EventRow, 'type' | 'payload'>): string | null {
+  const payload = typeof event.payload === 'object' && event.payload !== null ? (event.payload as Record<string, unknown>) : {};
+  const text = (value: unknown) => (typeof value === 'string' && value !== '' ? value : null);
+  switch (event.type) {
+    case 'action_failed': {
+      const status = typeof payload.status === 'number' ? `http_${payload.status}` : null;
+      const parts = [text(payload.kind), text(payload.type) ?? status, text(payload.message)].filter((part) => part !== null);
+      return parts.length > 0 ? parts.join(' · ') : null;
+    }
+    case 'webhook_received': {
+      const outcome = text(payload.outcome);
+      return outcome === null ? null : `${text(payload.event) ?? 'unknown event'}: ${outcome}`;
+    }
+    case 'invite_sent':
+    case 'message_sent': {
+      const sent = text(payload.text);
+      if (sent === null) return null;
+      // Found in the chat before a send: the message had gone out, but its record had been lost.
+      if (payload.recovered === true) return `recorded (already sent): ${sent}`;
+      return payload.dryRun === true ? `would send: ${sent}` : `sent: ${sent}`;
+    }
+    default:
+      return null;
+  }
 }
 
 /**

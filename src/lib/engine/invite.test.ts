@@ -45,6 +45,7 @@ describe('invite action', () => {
     e.fake.profiles.set('jane-doe', makeProfile({ currentCompany: 'A'.repeat(290) }));
     await run();
     expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'failed', failureReason: 'note_too_long: 303/300' });
+    expect(methods()).toEqual(['getProfile']);
   });
   it('marks a second URL of the same person as duplicate_person', async () => { // Review Focus 1
     await seedLead(e.db, { slug: 'jane-old', providerId: 'ACoJane', status: 'invite_sent' });
@@ -74,6 +75,17 @@ describe('invite action', () => {
     e.fake.failNext('getProfile', new UnipileError(429, 'errors/too_many_requests', '', 600));
     await run();
     expect((await getAppState(e.db)).invitesPausedUntil).toEqual(new Date('2026-11-17T09:10:00Z'));
+  });
+  it.each([0, -30, Number.NaN, Number.POSITIVE_INFINITY])('pauses invites until the next active day when retry_after is %d', async (retryAfter) => {
+    e.fake.failNext('getProfile', new UnipileError(429, 'errors/too_many_requests', '', retryAfter));
+    await run();
+    expect((await getAppState(e.db)).invitesPausedUntil).toEqual(new Date('2026-11-18T07:30:00Z'));
+  });
+  it('clears the retry count when the lead turns out to be connected already', async () => {
+    await e.db.update(leads).set({ retryCount: 1 }).where(eq(leads.id, lead.id));
+    e.fake.profiles.set('jane-doe', makeProfile({ networkDistance: 'FIRST_DEGREE' }));
+    expect((await run()).result).toBe('already_connected');
+    expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'already_connected', retryCount: 0 });
   });
   it('leaves the lead untouched on a 5xx error', async () => { // Review Focus 3
     e.fake.failNext('sendInvitation', new UnipileError(503, null, 'down'));

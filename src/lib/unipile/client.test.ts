@@ -246,6 +246,25 @@ describe('createUnipileClient', () => {
     });
   });
 
+  it('takes no retry delay from a retry_after or Retry-After that is not a number above 0', async () => {
+    responses.push(
+      json(429, { type: 'errors/too_many_requests', retry_after: 0 }),
+      json(429, { type: 'errors/too_many_requests', retry_after: -5 }),
+      new Response('slow down', { status: 429, headers: { 'retry-after': '' } }),
+      new Response('slow down', { status: 429, headers: { 'retry-after': '0' } }),
+      new Response('slow down', { status: 429, headers: { 'retry-after': 'Wed, 18 Nov 2026 07:30:00 GMT' } }),
+      new Response('slow down', { status: 429 }),
+    );
+    for (let i = 0; i < 6; i++) {
+      await expect(client.getProfile('x'), `response ${i}`).rejects.toMatchObject({ status: 429, retryAfterSeconds: null });
+    }
+  });
+
+  it('prefers a usable Retry-After header over an unusable retry_after', async () => {
+    responses.push(new Response(JSON.stringify({ retry_after: 0 }), { status: 429, headers: { 'retry-after': '45' } }));
+    await expect(client.getProfile('x')).rejects.toMatchObject({ retryAfterSeconds: 45 });
+  });
+
   it('uses detail then title as the error message', async () => {
     responses.push(json(422, { type: 'errors/x', title: 'Title', detail: 'Detail' }));
     await expect(client.getProfile('x')).rejects.toMatchObject({ message: 'Detail' });
@@ -261,6 +280,23 @@ describe('createUnipileClient', () => {
       }) as typeof fetch,
     });
     await expect(client.getProfile('x')).rejects.toMatchObject({ status: 0, type: 'network_error' });
+  });
+
+  it('names the cause of a network failure, so a wrong DSN reads as more than "fetch failed"', async () => {
+    const failingWith = (cause: unknown) =>
+      createUnipileClient({
+        dsn: 'https://x',
+        apiKey: 'k',
+        accountId: 'a',
+        fetch: (async () => {
+          throw new TypeError('fetch failed', { cause });
+        }) as typeof fetch,
+      });
+    const dns = Object.assign(new Error('getaddrinfo ENOTFOUND api99.unipile.example'), { code: 'ENOTFOUND' });
+    await expect(failingWith(dns).getProfile('x')).rejects.toMatchObject({ status: 0, type: 'network_error', message: 'fetch failed: ENOTFOUND' });
+    await expect(failingWith(new Error('socket hang up')).getProfile('x')).rejects.toMatchObject({ message: 'fetch failed: socket hang up' });
+    await expect(failingWith('connection reset').getProfile('x')).rejects.toMatchObject({ message: 'fetch failed: connection reset' });
+    await expect(failingWith(undefined).getProfile('x')).rejects.toMatchObject({ message: 'fetch failed' });
   });
 
   it('turns a timeout into status 0', async () => {

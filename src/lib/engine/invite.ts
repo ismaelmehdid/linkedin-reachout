@@ -44,7 +44,7 @@ async function markAlreadyConnected(deps: EngineDeps, lead: Lead, settings: Sett
   const marked = await updateLeadIfStatus(
     deps.db,
     lead,
-    { status: 'already_connected', sequenceStartedAt: now, nextActionAt: now, lastAction: 'already_connected', lastActionAt: now },
+    { status: 'already_connected', sequenceStartedAt: now, nextActionAt: now, retryCount: 0, lastAction: 'already_connected', lastActionAt: now },
     now,
   );
   await resetErrorStreak(deps.db);

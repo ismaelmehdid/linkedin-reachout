@@ -200,6 +200,17 @@ describe('tick', () => {
     expect(e.fake.calls).toEqual([{ method: 'getProfile', args: ['ACoAnn'] }]);
     expect(e.sleeps).toEqual([]);
   });
+  it('leaves the lock alone when another tick took it after its own lease ran out', async () => {
+    await acceptedDue();
+    const later = new Date(NOW.getTime() + TICK_LEASE_MS + 1000);
+    // The wait outlives the lease, which cannot happen while the function is killed first: a second tick takes over.
+    e.deps.sleep = async () => {
+      e.setNow(later);
+      expect(await acquireTickLock(e.db, later, TICK_LEASE_MS)).toBe(true);
+    };
+    await runTick(e.deps);
+    expect((await getAppState(e.db)).tickLockUntil).toEqual(new Date(later.getTime() + TICK_LEASE_MS));
+  });
   it('releases the lock when the tick itself throws', async () => {
     await queued();
     e.deps.sleep = async () => { throw new Error('boom'); };
