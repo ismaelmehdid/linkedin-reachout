@@ -1375,7 +1375,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3000/
     - `formatLocal(date: Date, timezone: string): string`, in the format `yyyy-MM-dd HH:mm`.
   - Server actions in `src/app/actions.ts`: each calls `requireSession()` first and `revalidatePath('/')` last.
     - `importLeadsAction(prev, formData): Promise<ImportResult>`.
-    - `toggleRunningAction(): Promise<{ blockers: string[] }>`. Starting returns the `startBlockers` without starting when there are any.
+    - `setRunningAction(running: boolean): Promise<{ blockers: string[] }>`. The button passes the state it asks for, never a toggle: a page that still shows "Pause" after the engine auto-paused must not restart sending. `true` returns the `startBlockers` without starting when there are any. `false` always pauses.
     - `pauseLeadAction(id)`, `resumeLeadAction(id)`, `retryLeadAction(id)`, `removeLeadAction(id)`.
 - UI (spec §11):
   - **Status bar:**
