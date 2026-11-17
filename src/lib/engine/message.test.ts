@@ -85,6 +85,7 @@ describe('message action', () => {
   it('records the earliest reply after the sequence start and ignores the owner\'s own messages', async () => {
     const lead = await seedLead(e.db, { status: 'followup_1', providerId: 'ACoJane', firstName: 'Jane', chatId: 'chat_1', sequenceStartedAt: SEQ });
     e.fake.chatMessages.set('chat_1', [
+      { id: 'm5', isSender: false, timestamp: 'not-a-date', text: 'Garbled' }, // counts at now, so a parsed reply time wins
       { id: 'm4', isSender: false, timestamp: '2026-11-16T10:00:00Z', text: 'Still keen' },
       { id: 'm3', isSender: true, timestamp: '2026-11-15T09:00:00Z', text: 'Bump Jane' },
       { id: 'm2', isSender: false, timestamp: '2026-11-14T18:00:00Z', text: 'Sounds good' },
@@ -107,11 +108,27 @@ describe('message action', () => {
     expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'messaged', retryCount: 0 });
     expect((await listEvents(e.db)).map((x) => [x.type, x.payload])).toEqual([['action_failed', { kind: 'message', status: 503, type: null, message: 'down' }]]);
   });
-  it('sends the first message in an existing chat without a reply check', async () => {
-    const lead = await seedLead(e.db, { status: 'already_connected', providerId: 'ACoJane', firstName: 'Jane', chatId: 'chat_1', sequenceStartedAt: SEQ });
+  it('stops the first message when the lead answered the invite note', async () => {
+    const lead = await seedLead(e.db, { status: 'accepted', providerId: 'ACoJane', firstName: 'Jane', chatId: 'chat_1', sequenceStartedAt: SEQ });
+    e.fake.chatMessages.set('chat_1', replyAt('2026-11-17T08:00:00Z'));
+    expect((await runMessageAction(e.deps, lead, 'first_message', e.settings)).result).toBe('replied');
+    expect(e.fake.calls.map((c) => c.method)).toEqual(['listChatMessages']);
+    expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'replied', nextActionAt: null, lastAction: 'reply_received', lastActionAt: new Date('2026-11-17T08:00:00Z') });
+  });
+  it('sends the first message in the chat that holds only our own invite note', async () => {
+    const lead = await seedLead(e.db, { status: 'accepted', providerId: 'ACoJane', firstName: 'Jane', chatId: 'chat_1', sequenceStartedAt: SEQ });
+    e.fake.chatMessages.set('chat_1', [{ id: 'm1', isSender: true, timestamp: '2026-11-10T09:00:00Z', text: 'Hi Jane from Acme' }]);
     expect((await runMessageAction(e.deps, lead, 'first_message', e.settings)).result).toBe('messaged');
-    expect(e.fake.calls).toEqual([{ method: 'sendMessage', args: ['chat_1', 'Thanks Jane'] }]);
+    expect(e.fake.calls.map((c) => c.method)).toEqual(['listChatMessages', 'sendMessage']);
+    expect(e.fake.calls[1].args).toEqual(['chat_1', 'Thanks Jane']);
     expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'messaged', chatId: 'chat_1' });
+  });
+  it('counts a lead message with an unparsable timestamp as a reply, at now', async () => {
+    const lead = await seedLead(e.db, { status: 'messaged', providerId: 'ACoJane', firstName: 'Jane', chatId: 'chat_1', sequenceStartedAt: SEQ });
+    e.fake.chatMessages.set('chat_1', replyAt('not-a-date'));
+    expect((await runMessageAction(e.deps, lead, 'followup_1', e.settings)).result).toBe('replied');
+    expect(e.fake.calls.map((c) => c.method)).toEqual(['listChatMessages']);
+    expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'replied', lastAction: 'reply_received', lastActionAt: NOW });
   });
   it('fails the lead instead of sending text that still contains {{', async () => {
     const lead = await seedLead(e.db, { status: 'accepted', providerId: 'ACoJane', firstName: 'Ja{{ne', sequenceStartedAt: SEQ });

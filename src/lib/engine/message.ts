@@ -19,16 +19,20 @@ const REPLY_CHECK_MESSAGE_LIMIT = 50;
 
 /**
  * The time of the earliest message from the lead after its sequence started, or null when there is none.
- * The earliest one is the reply the webhook would have recorded. Without a sequence start, every message
- * from the lead counts.
+ * The earliest one is the reply the webhook would have recorded. Both unknowns fail safe, so nothing goes
+ * to someone who may have written: without a sequence start every message from the lead counts, and a
+ * message whose timestamp cannot be parsed counts as sent at `now`.
  */
-function firstReplyAt(messages: ChatMessage[], sequenceStartedAt: Date | null): Date | null {
+function firstReplyAt(messages: ChatMessage[], sequenceStartedAt: Date | null, now: Date): Date | null {
   const after = sequenceStartedAt?.getTime() ?? -Infinity;
   let first: Date | null = null;
   for (const message of messages) {
     if (message.isSender) continue;
-    const at = new Date(message.timestamp);
-    if (at.getTime() > after && (first === null || at.getTime() < first.getTime())) first = at;
+    const sentAt = new Date(message.timestamp);
+    const unparsable = Number.isNaN(sentAt.getTime());
+    if (!unparsable && sentAt.getTime() <= after) continue;
+    const at = unparsable ? now : sentAt;
+    if (first === null || at.getTime() < first.getTime()) first = at;
   }
   return first;
 }
@@ -47,8 +51,9 @@ async function sendText(unipile: UnipileClient, lead: Lead, text: string): Promi
 }
 
 /**
- * Sends the first message or a follow-up. Before a follow-up it reads the chat, so a reply whose
- * webhook was missed stops the sequence instead of getting another message.
+ * Sends the first message or a follow-up. When the lead already has a chat (for the first message, the
+ * chat of an invite note), it reads it first, so a reply whose webhook was missed stops the sequence
+ * instead of getting another message.
  */
 export async function runMessageAction(deps: EngineDeps, lead: Lead, step: MessageStep, settings: Settings): Promise<ActionOutcome> {
   const { db } = deps;
@@ -56,14 +61,14 @@ export async function runMessageAction(deps: EngineDeps, lead: Lead, step: Messa
   const outcome = (result: ActionOutcome['result']): ActionOutcome => ({ leadId: lead.id, result });
   const onUnipileError = (err: unknown) => handleActionError(deps, { lead, kind: 'message', settings }, err);
 
-  if (step !== 'first_message' && lead.chatId !== null) {
+  if (lead.chatId !== null) {
     let messages: ChatMessage[];
     try {
       messages = await deps.unipile.listChatMessages(lead.chatId, REPLY_CHECK_MESSAGE_LIMIT);
     } catch (err) {
       return onUnipileError(err);
     }
-    const repliedAt = firstReplyAt(messages, lead.sequenceStartedAt);
+    const repliedAt = firstReplyAt(messages, lead.sequenceStartedAt, now);
     if (repliedAt !== null) {
       const marked = await updateLeadIfStatus(
         db,
