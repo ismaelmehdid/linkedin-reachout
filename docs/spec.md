@@ -18,7 +18,7 @@ Status: agreed design, 2026-11-17.
 | Hosting | Vercel Hobby |
 | Database | Neon Postgres (Vercel Marketplace) + Drizzle ORM |
 | LinkedIn access | Unipile API **v1**, via a small in-house typed `fetch` wrapper (no `unipile-node-sdk`) |
-| Scheduler | cron-job.org calls `GET /api/tick` every 5 minutes with `CRON_SECRET` |
+| Scheduler | cron-job.org calls `GET /api/tick` every 5 minutes during the active hours, with the header `Authorization: Bearer <CRON_SECRET>` |
 | Tests | Vitest; flow engine tested with a fake clock and a mocked Unipile client |
 
 ## 3. Configuration
@@ -34,7 +34,7 @@ Environment variables:
 | `APP_PASSWORD` | Dashboard login password, at least 16 characters |
 | `CRON_SECRET` | Required on `/api/tick`. At least 32 characters; generate with `openssl rand -base64 32` |
 | `WEBHOOK_SECRET` | Expected in the `Unipile-Auth` header on webhook calls. At least 32 characters; generate with `openssl rand -base64 32` |
-| `DRY_RUN` | When `true`, no Unipile write endpoint is called |
+| `DRY_RUN` | Required, exactly `true` or `false`. When `true`, no Unipile write endpoint is called. Any other value, or none, makes every request fail as misconfigured, so a typo can never switch the app to live sending |
 
 The LinkedIn account is connected manually in the Unipile dashboard. There is no hosted-auth flow in the app.
 
@@ -54,7 +54,7 @@ The LinkedIn account is connected manually in the Unipile dashboard. There is no
 - A person already present in the database, in any status, is skipped and reported as "already contacted". The tool never contacts the same person twice. A `failed` lead can be retried manually from its row.
 - New leads are inserted with status `queued`.
 - If the profile fetch shows that a lead's `provider_id` already belongs to another lead (the same person pasted under a different URL), the new lead is set to `failed` with reason `duplicate_person`.
-- A global **Start / Pause** toggle controls all sending. Start is blocked until all four templates are saved and valid.
+- **Start** and **Pause** control all sending. Each button asks for the state it names; neither is a toggle. Start is blocked until all four templates are saved, valid, and no longer the shipped placeholder drafts.
 
 ## 6. Sequence (fixed flow)
 
@@ -71,6 +71,7 @@ Rules that apply at every step:
 
 - **Stop on reply**: any message from the lead, at any time (including a reply to the invite note without accepting), sets status `replied` and cancels all pending actions for that lead permanently.
 - **Manual messages**: an outgoing message the user sends directly on LinkedIn counts as a step having been sent. Before the first message, it replaces the first message (status `messaged`). After that, it resets the follow-up timer without changing the step.
+- **Never twice**: before any message, the app reads the chat with that person. If its own text for this step is already there (a send whose confirmation was lost), it records the step and does not send again.
 - **Invite expiry**: an invite still pending 21 days after sending is withdrawn (`DELETE /api/v1/users/invite/sent/{invitation_id}`) and the lead is set to `invite_expired`.
 - **Active window**: an action that becomes due outside the active window waits for the next window.
 - **Paused app**: while the app is paused, ticks do nothing. Webhooks still record replies and acceptances.
@@ -82,13 +83,13 @@ Rules that apply at every step:
 
 - **Messaging webhook** (`source: messaging`, `message_received`): accepting an invite that had a note creates a chat containing the note, which fires in near real time. When this fires for a lead in `invite_sent`, confirm with a profile fetch (`network_distance === FIRST_DEGREE`), because a reply without accepting also creates a chat.
 - **Users webhook** (`source: users`, `new_relation`): matched by `user_provider_id`. May arrive up to 8 hours after acceptance.
-- **Safety-net poll**: `GET /api/v1/users/invite/sent` 2–3 times per day at random hours within the active window. An invite that disappeared from the list is checked with a profile fetch (accepted vs ignored).
+- **Safety-net poll**: `GET /api/v1/users/invite/sent` 2–3 times per day at random hours within the active window. An invite that disappeared from the list is checked with a profile fetch (accepted vs ignored). When two polls in a row find it missing and the person is still not a connection, the invite was declined or withdrawn by hand, and the lead is set to `invite_expired`.
 
 ### Replies
 
 - From `message_received`: a message is a reply when `sender.attendee_provider_id !== account_info.user_id` and the sender's provider id matches a lead.
 - A message where the sender is the account owner is treated as a manual outgoing message (see §6). For a lead in `invite_sent`, it is the acceptance signal described above instead. An owner message counts as manual only when it is more than 2 minutes newer than the lead's last recorded action. Anything else is ignored: the echo of the app's own send, a late or retried copy of the invite note, or an out-of-order delivery.
-- Before sending any message in an existing chat (the first message after an invite with a note, and every follow-up), fetch the latest messages of the chat (`GET /api/v1/chats/{chat_id}/messages`) and abort if a reply exists, in case a webhook was missed.
+- Before sending any message, the app finds the chat with that person (by its chat id, or by looking the person up when the id is unknown) and reads it (`GET /api/v1/chats/{chat_id}/messages`). It aborts if a reply exists, in case a webhook was missed. If the owner wrote something by hand that no webhook reported, that counts as a manual message: before the first message it replaces it, later it resets the timer.
 
 Webhooks are registered once in the Unipile dashboard with the header `Unipile-Auth: <WEBHOOK_SECRET>` and `Content-Type: application/json`. The handler returns 200 quickly (Unipile retries after 30 s).
 
@@ -108,7 +109,7 @@ Webhooks are registered once in the Unipile dashboard with the header `Unipile-A
 - Due messages take priority over new invites.
 - When several actions are due, one is picked at random. After the random wait, the tick reads the app state, the settings and the picked lead again. It sends nothing if the app was paused, the active window closed, or the lead changed in the meantime (a reply, a manual message, a pause); a template saved during the wait is the one that is sent.
 - Housekeeping runs before the outreach action of each tick and does not use its slot: marking `no_response`, up to 3 acceptance checks (profile views, inside the daily cap), at most 1 invite withdrawal, and the invite poll when it is due.
-- All values are editable in Settings.
+- All values are editable in Settings, inside fixed bounds: at most 80 invites per day, 200 per rolling 7 days, 100 messages per day, 100 profile views per day, a random wait of at most 100 seconds, and delays of at least 1 day.
 
 These defaults stay under the limits Unipile documents for paid accounts (80–100 invites per day, about 200 per week; about 100 profile views and 100 actions of each type per day).
 
@@ -116,7 +117,7 @@ These defaults stay under the limits Unipile documents for paid accounts (80–1
 
 - Four templates: invite note, first message, follow-up 1, follow-up 2. Written by the user in Settings; the app ships short placeholder drafts.
 - Variables: `first_name`, `last_name`, `headline`, `company`, `position`, `location`. `company` and `position` come from the current entry of `work_experience`.
-- Syntax: `{{first_name}}`; fallback with `{{company|your team}}`.
+- Syntax: `{{first_name}}`; fallback with `{{company|your team}}`. Names are case-sensitive. A known name in single braces, such as `{first_name}`, is refused at save, because it would be sent as written.
 - A variable with no value and no fallback blocks the action and sets the lead to `failed` with reason `missing_variable`. A raw `{{…}}` is never sent.
 - Right after a lead's profile fetch, before the invite, all four templates are rendered for that lead. A missing variable (`missing_variable: …`) or a rendered invite note over 300 characters (`note_too_long`) sets the lead to `failed` before anything is sent.
 - Settings shows a live preview of each template rendered against one real lead, and a character counter for the invite note (limit 300).
@@ -130,15 +131,18 @@ These defaults stay under the limits Unipile documents for paid accounts (80–1
 | `errors/already_connected` | Status `already_connected`; first message due now. |
 | `errors/already_invited_recently` | Status `invite_sent` without a new invite. |
 | `errors/cannot_invite_attendee`, `invalid_recipient`, `blocked_recipient`, `user_unreachable`, `no_connection_with_recipient`, profile 404 | Status `failed` with the reason. |
+| HTTP 401 or 403, or an account-level error (disconnected account, expired credentials, missing subscription) | Auto-pause at once with the reason. Lead unchanged. |
 | Any other error | Retry once on the next tick, then `failed`. |
+| 5 failed actions in a row, with no successful send in between | Auto-pause all sending and show a banner on the dashboard. |
 | 3 limit, 5xx or network errors in a row, with no successful send in between | Auto-pause all sending and show a banner on the dashboard. |
 
 ## 11. Dashboard
 
-- Counters by status at the top; pause/limit banner when relevant.
+- Counters by status at the top; pause/limit banner when relevant. A banner always says whether the app is in dry run or live.
 - One table: name, headline, current role (position and company), URL, status, last action + date, next action + due date. Filter by status. The role line is where the owner checks, before going live, that company and position were read correctly.
 - Per-row actions: pause, retry (failed only; the lead goes back to the status it failed in), remove (deletes the lead but keeps its events, so caps stay correct; the person can be pasted again).
 - Settings page: templates with preview, delays, caps, active window.
+- Event log of the last 50 events: each failed action with its reason, each webhook with its outcome, each send with its text.
 - No reply notifications in v1; the "Replied" filter is the inbox.
 
 ## 12. Statuses
@@ -155,7 +159,8 @@ These defaults stay under the limits Unipile documents for paid accounts (80–1
 ## 14. Cost
 
 - Unipile: €49/month (covers up to 10 accounts), after a 7-day free trial.
-- Vercel Hobby, Neon free tier, cron-job.org: free. Vercel's Hobby plan is for personal, non-commercial use; commercial use needs the Pro plan.
+- Vercel Hobby and cron-job.org: free. Vercel's Hobby plan is for personal, non-commercial use; commercial use needs the Pro plan.
+- Neon free tier: free only while cron-job.org calls the tick during the active hours alone. A tick every 5 minutes around the clock keeps the database awake and uses about 180 compute-hours a month against a free allowance of 100; Neon then suspends the database until the next month.
 
 ## 15. References
 
