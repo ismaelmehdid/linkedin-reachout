@@ -137,6 +137,30 @@ describe('tick', () => {
     expect((await getLead(e.db, lead.id)).status).toBe('queued');
     expect((await runTick(e.deps)).status).toBe('paused');
   });
+  it('pauses at once on a disconnected account and leaves the lead queued', async () => { // final review, probe 3
+    const lead = await queued();
+    for (let i = 0; i < 2; i++) e.fake.failNext('getProfile', new UnipileError(401, 'errors/disconnected_account', 'The account appears to be disconnected'));
+    expect((await runTick(e.deps)).action).toEqual({ leadId: lead.id, result: 'deferred' });
+    expect(await runTick(e.deps)).toEqual({ status: 'paused', finished: 0, action: null });
+    expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'queued', retryCount: 0, failureReason: null });
+    expect(await getAppState(e.db)).toMatchObject({
+      running: false,
+      pauseReason: 'Auto-paused: Unipile rejected the account (errors/disconnected_account). Reconnect the LinkedIn account in Unipile, then press Start.',
+      consecutiveErrors: 0,
+    });
+    // The second tick found the app paused and called nothing.
+    expect(methods()).toEqual(['getProfile']);
+  });
+  it('pauses after five leads in a row failed, and fails no sixth', async () => {
+    const ghosts = [];
+    for (let i = 0; i < 6; i++) ghosts.push(await seedLead(e.db));
+    for (let i = 0; i < 5; i++) expect((await runTick(e.deps)).action?.result).toBe('failed');
+    expect(await getAppState(e.db)).toMatchObject({ running: false, pauseReason: 'Auto-paused: 5 actions failed in a row with no successful send.' });
+    expect((await runTick(e.deps)).status).toBe('paused');
+    const statuses = await Promise.all(ghosts.map(async (ghost) => (await getLead(e.db, ghost.id)).status));
+    expect(statuses.filter((status) => status === 'failed')).toHaveLength(5);
+    expect(statuses.filter((status) => status === 'queued')).toHaveLength(1);
+  });
   it('resets the error streak after a successful send', async () => {
     await queued(); e.fake.failNext('getProfile', new UnipileError(503, null, '')); e.fake.failNext('getProfile', new UnipileError(503, null, ''));
     for (let i = 0; i < 3; i++) await runTick(e.deps);

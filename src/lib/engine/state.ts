@@ -59,6 +59,19 @@ export async function setRunning(db: Db, running: boolean): Promise<void> {
   await updateAppState(db, running ? { running: true, pauseReason: null, consecutiveErrors: 0 } : { running: false });
 }
 
+/** Stops all sending and shows `reason` on the dashboard. Pressing Start clears it. */
+export async function pauseApp(db: Db, reason: string): Promise<void> {
+  await updateAppState(db, { running: false, pauseReason: reason });
+}
+
+/**
+ * Unipile refused the account itself, so every lead would fail the same way: stop at once.
+ * `detail` is the error type, or `http_<status>` when the error has none.
+ */
+export function pauseForAccountError(db: Db, detail: string): Promise<void> {
+  return pauseApp(db, `Auto-paused: Unipile rejected the account (${detail}). Reconnect the LinkedIn account in Unipile, then press Start.`);
+}
+
 /**
  * Counts one more limit, 5xx or network error. When the streak reaches the limit, the same
  * statement stops all sending and records why.

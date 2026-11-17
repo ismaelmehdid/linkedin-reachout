@@ -6,6 +6,8 @@ import {
   acquireTickLock,
   getAppState,
   incrementErrorStreak,
+  pauseApp,
+  pauseForAccountError,
   releaseTickLock,
   resetErrorStreak,
   setRunning,
@@ -57,6 +59,23 @@ describe('app state', () => {
     await resetErrorStreak(db);
     expect(await incrementErrorStreak(db, 'c')).toEqual({ autoPaused: false });
     expect(await getAppState(db)).toMatchObject({ running: true, pauseReason: null, consecutiveErrors: 1 });
+  });
+
+  it('pauses with a reason, which starting again clears', async () => {
+    await setRunning(db, true);
+    await pauseApp(db, 'Stopped for a test');
+    expect(await getAppState(db)).toMatchObject({ running: false, pauseReason: 'Stopped for a test' });
+    await setRunning(db, true);
+    expect(await getAppState(db)).toMatchObject({ running: true, pauseReason: null });
+  });
+
+  it('pauses on an account error and says what to do', async () => {
+    await setRunning(db, true);
+    await pauseForAccountError(db, 'errors/disconnected_account');
+    expect(await getAppState(db)).toMatchObject({
+      running: false,
+      pauseReason: 'Auto-paused: Unipile rejected the account (errors/disconnected_account). Reconnect the LinkedIn account in Unipile, then press Start.',
+    });
   });
 
   it('starting again clears the pause reason and the streak', async () => {

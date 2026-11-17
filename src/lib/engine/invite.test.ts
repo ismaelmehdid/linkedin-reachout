@@ -117,6 +117,68 @@ describe('invite action', () => {
     expect((await getLead(e.db, lead.id)).status).toBe('replied');
     expect((await listEvents(e.db)).map((x) => x.type)).toEqual(['profile_view', 'invite_sent']);
   });
+  describe('an error that is about the account, not the lead', () => {
+    const reconnect = (detail: string) => `Auto-paused: Unipile rejected the account (${detail}). Reconnect the LinkedIn account in Unipile, then press Start.`;
+
+    it.each([
+      ['a 401 on the profile fetch', 'getProfile', new UnipileError(401, 'errors/disconnected_account', 'The account appears to be disconnected'), 'errors/disconnected_account'],
+      ['a 403 without a type on the invite', 'sendInvitation', new UnipileError(403, null, 'Forbidden'), 'http_403'],
+      ['a credentials error on the invite', 'sendInvitation', new UnipileError(422, 'errors/expired_credentials', 'Expired'), 'errors/expired_credentials'],
+    ] as const)('pauses the app at once and leaves the lead as it is on %s', async (_label, method, error, detail) => {
+      e.fake.failNext(method, error);
+      expect(await run()).toEqual({ leadId: lead.id, result: 'deferred' });
+      expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'queued', retryCount: 0, failureReason: null, nextActionAt: lead.nextActionAt });
+      expect(await getAppState(e.db)).toMatchObject({ running: false, pauseReason: reconnect(detail), consecutiveErrors: 0, invitesPausedUntil: null });
+      expect((await listEvents(e.db)).at(-1)).toMatchObject({ type: 'action_failed', leadId: lead.id, payload: { kind: 'invite', status: error.status, type: error.type } });
+    });
+  });
+
+  describe('failed actions in a row', () => {
+    /** A lead whose profile Unipile does not know: its invite fails with a 404, which is permanent. */
+    const failOne = async () => {
+      const ghost = await seedLead(e.db);
+      expect((await runInviteAction(e.deps, ghost, e.settings)).result).toBe('failed');
+    };
+
+    it('pauses the app at the fifth failed action with no send in between', async () => {
+      for (let i = 0; i < 4; i++) await failOne();
+      expect(await getAppState(e.db)).toMatchObject({ running: true, pauseReason: null });
+      await failOne();
+      expect(await getAppState(e.db)).toMatchObject({ running: false, pauseReason: 'Auto-paused: 5 actions failed in a row with no successful send.' });
+    });
+    it('counts only the failures since the last invite or message that went out', async () => {
+      for (let i = 0; i < 4; i++) await failOne();
+      expect((await run()).result).toBe('invited');
+      for (let i = 0; i < 4; i++) await failOne();
+      expect((await getAppState(e.db)).running).toBe(true);
+      await failOne();
+      expect((await getAppState(e.db)).running).toBe(false);
+    });
+    it('counts an error that fails a lead after its one retry, and errors that left their lead alone', async () => {
+      // Three transient errors would trip the error streak first, so two of them, then failures of another kind.
+      for (let i = 0; i < 2; i++) {
+        e.fake.failNext('getProfile', new UnipileError(503, null, 'down'));
+        expect((await run()).result).toBe('deferred');
+      }
+      await failOne();
+      await failOne();
+      expect((await getAppState(e.db)).running).toBe(true);
+      e.fake.failNext('sendInvitation', new UnipileError(422, 'errors/brand_new_error', ''));
+      expect((await run()).result).toBe('retry');
+      expect((await getAppState(e.db)).running).toBe(true);
+      e.fake.failNext('sendInvitation', new UnipileError(422, 'errors/brand_new_error', ''));
+      expect((await runInviteAction(e.deps, await getLead(e.db, lead.id), e.settings)).result).toBe('failed');
+      expect(await getAppState(e.db)).toMatchObject({ running: false, pauseReason: 'Auto-paused: 5 actions failed in a row with no successful send.' });
+    });
+    it('does not count a lead that fails without an error from Unipile', async () => {
+      for (let i = 0; i < 4; i++) await failOne();
+      e.fake.profiles.set('jane-doe', makeProfile({ currentCompany: null }));
+      expect((await run()).result).toBe('failed');
+      expect((await getLead(e.db, lead.id)).failureReason).toBe('missing_variable: company');
+      expect((await getAppState(e.db)).running).toBe(true);
+    });
+  });
+
   it('records an invite that Unipile accepted without an invitation id', async () => {
     e.deps.unipile = { ...e.fake, sendInvitation: async () => ({ invitationId: null }) };
     expect((await run()).result).toBe('invited');

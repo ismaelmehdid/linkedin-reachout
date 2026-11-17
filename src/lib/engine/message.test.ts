@@ -141,6 +141,18 @@ describe('message action', () => {
     expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'messaged', retryCount: 0 });
     expect((await listEvents(e.db)).map((x) => [x.type, x.payload])).toEqual([['action_failed', { kind: 'message', status: 503, type: null, message: 'down' }]]);
   });
+  it('pauses the app at once, and leaves the lead as it is, when Unipile rejects the account', async () => {
+    const lead = await seedLead(e.db, { status: 'messaged', providerId: 'ACoJane', firstName: 'Jane', chatId: 'chat_1', sequenceStartedAt: SEQ });
+    e.fake.failNext('listChatMessages', new UnipileError(401, 'errors/disconnected_account', 'The account appears to be disconnected'));
+    expect((await runMessageAction(e.deps, lead, 'followup_1', e.settings)).result).toBe('deferred');
+    expect(sends()).toEqual([]);
+    expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'messaged', retryCount: 0, failureReason: null, nextActionAt: lead.nextActionAt });
+    expect(await getAppState(e.db)).toMatchObject({
+      running: false,
+      pauseReason: 'Auto-paused: Unipile rejected the account (errors/disconnected_account). Reconnect the LinkedIn account in Unipile, then press Start.',
+      messagesPausedUntil: null,
+    });
+  });
   it('stops the first message when the lead answered the invite note', async () => {
     const lead = await seedLead(e.db, { status: 'accepted', providerId: 'ACoJane', firstName: 'Jane', chatId: 'chat_1', sequenceStartedAt: SEQ });
     e.fake.chatMessages.set('chat_1', replyAt('2026-11-17T08:00:00Z'));

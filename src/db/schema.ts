@@ -33,6 +33,7 @@ export type EventType =
   | 'invite_sent'
   | 'message_sent'
   | 'invite_withdrawn'
+  | 'invite_missing'
   | 'webhook_received'
   | 'action_failed';
 
@@ -47,6 +48,7 @@ export type LastAction =
   | 'manual_message'
   | 'no_response'
   | 'invite_withdrawn'
+  | 'invite_gone'
   | 'failed';
 
 const timestamptz = (name: string) => timestamp(name, { withTimezone: true });

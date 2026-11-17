@@ -1,16 +1,20 @@
-import { and, eq } from 'drizzle-orm';
-import { leads, type Lead, type NewLead } from '@/db/schema';
+import { and, eq, gt, sql } from 'drizzle-orm';
+import { events, leads, type Lead, type NewLead } from '@/db/schema';
 import type { Db } from '@/db/types';
 import { nextActiveDayStart } from '@/lib/schedule/window';
 import type { Settings } from '@/lib/settings/settings';
 import { classifyUnipileError, UnipileError } from '@/lib/unipile/errors';
 import type { EngineDeps } from './deps';
 import { logEvent } from './events';
-import { incrementErrorStreak, updateAppState } from './state';
+import { incrementErrorStreak, pauseApp, pauseForAccountError, updateAppState } from './state';
+
+/** This many failed actions with no invite or message sent in between pause the app (spec §10). */
+export const FAILED_ACTION_LIMIT = 5;
 
 /**
- * `deferred`: a limit or transient error left the lead as it is. `superseded`: nothing was sent, because the
- * lead changed first (the compare-and-set update matched no row) or because the owner had written by hand.
+ * `deferred`: a limit, transient or account error left the lead as it is. `superseded`: nothing was sent,
+ * because the lead changed first (the compare-and-set update matched no row) or because the owner had
+ * written by hand.
  */
 export type ActionOutcome = {
   leadId: number;
@@ -36,9 +40,12 @@ export async function updateLeadIfStatus(
   return rows.length > 0;
 }
 
-/** Compare-and-set on `lead.status`, so a lead a webhook already moved on stays as it is. */
-export async function failLead(db: Db, lead: Lead, reason: string, at: Date): Promise<void> {
-  await updateLeadIfStatus(
+/**
+ * Compare-and-set on `lead.status`, so a lead a webhook already moved on stays as it is.
+ * Returns whether the lead was set to `failed`.
+ */
+export function failLead(db: Db, lead: Lead, reason: string, at: Date): Promise<boolean> {
+  return updateLeadIfStatus(
     db,
     lead,
     {
@@ -53,14 +60,33 @@ export async function failLead(db: Db, lead: Lead, reason: string, at: Date): Pr
   );
 }
 
+/**
+ * Pauses the app when FAILED_ACTION_LIMIT `action_failed` events are newer than the latest invite or
+ * message that went out. One lead that cannot be reached is normal; a row of failures with nothing
+ * getting through means something is wrong that no error type named. Events are compared by id, which
+ * is their insertion order: within one tick they share the same `createdAt`.
+ */
+async function pauseAfterRepeatedFailures(db: Db): Promise<void> {
+  const lastSendId = sql`(select coalesce(max(${events.id}), 0) from ${events} where ${events.type} in ('invite_sent', 'message_sent'))`;
+  const [row] = await db
+    .select({ failures: sql<number>`count(*)`.mapWith(Number) })
+    .from(events)
+    .where(and(eq(events.type, 'action_failed'), gt(events.id, lastSendId)));
+  if (row.failures >= FAILED_ACTION_LIMIT) {
+    await pauseApp(db, `Auto-paused: ${FAILED_ACTION_LIMIT} actions failed in a row with no successful send.`);
+  }
+}
+
 function describeError(err: unknown): { status: number | null; type: string | null; message: string } {
   if (err instanceof UnipileError) return { status: err.status, type: err.type, message: err.message };
   return { status: null, type: null, message: err instanceof Error ? err.message : String(err) };
 }
 
 /**
- * The error policy (spec §10) for a failed invite or message action. Limit and transient errors
- * leave the lead as it is; permanent errors fail it; any other error is retried once, then fails it.
+ * The error policy (spec §10) for a failed invite or message action. Limit and transient errors leave
+ * the lead as it is; an account error does too, and pauses the app at once; permanent errors fail the
+ * lead; any other error is retried once, then fails it. A lead that fails here counts toward the pause
+ * after FAILED_ACTION_LIMIT failed actions in a row.
  */
 export async function handleActionError(
   deps: EngineDeps,
@@ -89,8 +115,12 @@ export async function handleActionError(
     case 'transient':
       await incrementErrorStreak(db, reason);
       return outcome('deferred');
+    case 'account':
+      // The lead keeps its `nextActionAt`: it is tried again once the account works and Start is pressed.
+      await pauseForAccountError(db, reason);
+      return outcome('deferred');
     case 'permanent':
-      await failLead(db, lead, reason, now);
+      if (await failLead(db, lead, reason, now)) await pauseAfterRepeatedFailures(db);
       return outcome('failed');
     default: {
       // Unknown errors, and any class the calling action does not handle itself.
@@ -99,7 +129,7 @@ export async function handleActionError(
         const marked = await updateLeadIfStatus(db, lead, { retryCount: 1 }, now);
         return outcome(marked ? 'retry' : 'superseded');
       }
-      await failLead(db, lead, type ?? message, now);
+      if (await failLead(db, lead, type ?? message, now)) await pauseAfterRepeatedFailures(db);
       return outcome('failed');
     }
   }
