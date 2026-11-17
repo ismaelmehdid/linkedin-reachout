@@ -1006,7 +1006,11 @@ Order (spec §8, §13):
 8. Pick the action:
    - **Message**, when messages remain and `messagesPausedUntil` is not after now: a random due lead (`ORDER BY random()`, not paused, `nextActionAt <= now`) in a status of `MESSAGE_STEP_BY_STATUS`.
    - **Invite** otherwise, when invites and profile views remain and `invitesPausedUntil` is not after now: a random due `queued` lead.
-9. With a lead picked: `await sleep(Math.floor(random() × jitterMaxSeconds × 1000))`. Then re-read the lead by id. If it no longer exists, is paused, has a different status from the one it was picked with, or is no longer due (`nextActionAt` null or after the tick's now), skip the action and report `{ leadId, result: 'superseded' }`: a reply, a manual message or a pause arrived during the wait. A manual message to a lead that already got the first message keeps its status and only moves `nextActionAt`, which is why the due check is needed. Otherwise run the action with the freshly read lead.
+9. Time budget: if housekeeping took more than `OUTREACH_START_BUDGET_MS = 30_000` (`deps.now()` against the tick's start), skip the outreach action for this tick. The function that runs a tick is killed at 180 s, and a kill between a send and its database write could send the same message twice. With the wait (at most 90 s) and one action (two Unipile calls of at most 20 s each), a tick then ends below 180 s.
+10. With a lead picked: `await sleep(Math.floor(random() × jitterMaxSeconds × 1000))`. Everything that can change during the wait is then read again, and the tick stops without sending when a check fails:
+    - App state: not `running` gives `paused`; the paused-until of the picked action's kind after `deps.now()` gives `action: null`. Pause is the user's emergency control, so it must stop a send that is already waiting.
+    - Settings: read again and used from here on, so a template saved during the wait is the one sent. Outside the active window at `deps.now()` gives `outside_window`.
+    - Lead: re-read the lead by id. If it no longer exists, is paused, has a different status from the one it was picked with, or is no longer due (`nextActionAt` null or after the tick's now), skip the action and report `{ leadId, result: 'superseded' }`: a reply, a manual message or a pause arrived during the wait. A manual message to a lead that already got the first message keeps its status and only moves `nextActionAt`, which is why the due check is needed. Otherwise run the action with the freshly read lead.
 
 - [ ] **Step 1: Write the failing tests** (`e = await createTestEngine()` and `e.fake.profiles.set('jane-doe', makeProfile())` in `beforeEach`):
 
@@ -1066,6 +1070,33 @@ it('sends nothing when the lead was paused during the random wait', async () => 
   expect((await runTick(e.deps)).action).toEqual({ leadId: lead.id, result: 'superseded' });
   expect(methods()).toEqual([]);
   expect((await getLead(e.db, lead.id)).status).toBe('accepted');
+});
+it('sends nothing when the app was paused during the random wait', async () => {
+  await acceptedDue();
+  e.deps.sleep = async () => { await setRunning(e.db, false); };
+  expect(await runTick(e.deps)).toMatchObject({ status: 'paused', action: null });
+  expect(methods()).toEqual([]);
+});
+it('uses the templates saved during the random wait', async () => {
+  await acceptedDue();
+  e.deps.sleep = async () => { await saveSettings(e.db, { ...e.settings, templates: { ...e.settings.templates, firstMessage: 'Hello {{first_name}}' } }); };
+  await runTick(e.deps);
+  expect(e.fake.calls).toEqual([{ method: 'startChat', args: ['ACoBob', 'Hello Bob'] }]);
+});
+it('sends nothing when the active window closed during the random wait', async () => {
+  e.setNow(new Date('2026-11-17T17:59:30Z')); await acceptedDue();
+  e.deps.sleep = async () => { e.setNow(new Date('2026-11-17T18:00:30Z')); };
+  expect((await runTick(e.deps)).action).toBeNull();
+  expect(methods()).toEqual([]);
+});
+it('skips the outreach action when housekeeping used up the time budget', async () => {
+  await seedLead(e.db, { status: 'invite_sent', providerId: 'ACoSlow', acceptanceCheckPending: true, inviteSentAt: NOW, nextActionAt: new Date('2026-12-08T09:00:00Z') });
+  e.fake.profiles.set('ACoSlow', makeProfile({ providerId: 'ACoSlow' }));
+  await updateAppState(e.db, { nextInvitePollAt: new Date(NOW.getTime() + 3_600_000) });
+  e.fake.onCall('getProfile', async () => { e.setNow(new Date(NOW.getTime() + 31_000)); });
+  await acceptedDue();
+  expect((await runTick(e.deps)).action).toBeNull();
+  expect(methods()).toEqual(['getProfile']);
 });
 it('auto-pauses after three 5xx errors in a row and keeps the lead queued', async () => { // Review Focus 3
   const lead = await queued();

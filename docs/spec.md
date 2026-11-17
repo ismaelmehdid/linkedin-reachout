@@ -105,7 +105,7 @@ Webhooks are registered once in the Unipile dashboard with the header `Unipile-A
 | Warm-up ramp | none |
 
 - Due messages take priority over new invites.
-- When several actions are due, one is picked at random. After the random wait, the tick re-reads the picked lead and skips it if it changed in the meantime (a reply, a manual message, a pause).
+- When several actions are due, one is picked at random. After the random wait, the tick reads the app state, the settings and the picked lead again. It sends nothing if the app was paused, the active window closed, or the lead changed in the meantime (a reply, a manual message, a pause); a template saved during the wait is the one that is sent.
 - Housekeeping runs before the outreach action of each tick and does not use its slot: marking `no_response`, up to 3 acceptance checks (profile views, inside the daily cap), at most 1 invite withdrawal, and the invite poll when it is due.
 - All values are editable in Settings.
 
