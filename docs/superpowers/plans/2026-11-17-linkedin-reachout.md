@@ -161,12 +161,12 @@ it('keeps events when their lead is deleted', async () => {
 URL rules (spec §5):
 - Trim the input. Add `https://` when there is no scheme.
 - The host is `linkedin.com`, `www.linkedin.com` or a two-letter subdomain such as `fr.linkedin.com`.
-- The path is `/in/<slug>`, with an optional trailing `/`. Ignore the query and the hash.
+- The path is `/in/<slug>`, with an optional trailing `/`. Ignore the query and the hash. An optional two-letter language suffix is allowed and ignored: `/in/<slug>/<xx>`, for example `/in/jane-doe/en`. Any other extra path segment is rejected.
 - Percent-decode the slug and keep its case, because `ACoA…` ids are case-sensitive.
 - `url` is `https://www.linkedin.com/in/<encodeURIComponent(slug)>`.
 - Errors are exactly `not a LinkedIn URL` (wrong host) or `not a profile URL (expected linkedin.com/in/...)` (right host, wrong path).
 
-Import: skip blank lines. Invalid lines go to `invalid`. Duplicates, compared on `lower(slug)` both inside the paste and against the database, go to `duplicates` as the pasted slug. Insert the rest with status `queued` and `nextActionAt = now`.
+Import: skip blank lines. Invalid lines go to `invalid`. Duplicates, compared on `lower(slug)` both inside the paste and against the database, go to `duplicates` as the pasted slug. Insert the rest with status `queued` and `nextActionAt = now`, using `.onConflictDoNothing().returning({ slug })` so that two overlapping imports never throw; count `added` from the returned rows and report the others as duplicates.
 
 - [ ] **Step 1: Write the failing tests:**
 

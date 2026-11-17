@@ -48,7 +48,7 @@ The LinkedIn account is connected manually in the Unipile dashboard. There is no
 ## 5. Lead input
 
 - The dashboard has a textarea: one LinkedIn URL per line.
-- Accepted format: `linkedin.com/in/{slug}` only, with or without `www.` or a country subdomain, trailing slash, or query string. Other URLs (Sales Navigator, company pages, malformed) are rejected with a per-line error.
+- Accepted format: `linkedin.com/in/{slug}` only, with or without `www.` or a country subdomain, trailing slash, query string, or a two-letter language suffix such as `/in/{slug}/en`. Other URLs (Sales Navigator, company pages, malformed) are rejected with a per-line error.
 - The normalized slug (`public_identifier`) is the dedupe key until the `provider_id` is known; from then on `provider_id` is the key.
 - A person already present in the database, in any status, is skipped and reported as "already contacted". The tool never contacts the same person twice. A `failed` lead can be retried manually from its row.
 - New leads are inserted with status `queued`.
