@@ -42,7 +42,7 @@ The LinkedIn account is connected manually in the Unipile dashboard. There is no
 
 - Next.js middleware requires a signed session cookie on every page and API route, except `/api/tick`, `/api/webhooks/unipile` and the login route.
 - Login compares the submitted password with `APP_PASSWORD` (constant-time) and sets the signed cookie.
-- `/api/tick` rejects requests without the correct `CRON_SECRET` (header or bearer token).
+- `/api/tick` rejects requests without the header `Authorization: Bearer <CRON_SECRET>`.
 - `/api/webhooks/unipile` rejects requests without `Unipile-Auth: <WEBHOOK_SECRET>`. Unipile v1 webhooks are not signed, so this header is the only check.
 
 ## 5. Lead input
