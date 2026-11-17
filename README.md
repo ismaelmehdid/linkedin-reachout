@@ -51,7 +51,7 @@ Other checks: `npm run typecheck`, `npm run lint`, `npm run build`.
 | `WEBHOOK_SECRET` | Expected in the `Unipile-Auth` header on webhook calls. At least 32 characters |
 | `DRY_RUN` | When `true`, no Unipile write endpoint is called |
 
-The app refuses to start with weak secrets. Generate each of the three secrets with:
+The deploy succeeds even with weak secrets, but every request then fails until each secret is long enough. Generate each of the three secrets with:
 
 ```bash
 openssl rand -base64 32
@@ -72,7 +72,7 @@ Do these steps in order.
    2. Add Neon from the Vercel Marketplace. It sets `DATABASE_URL`.
    3. Set the other variables from the table above. Set `DRY_RUN=true`.
    4. Deploy.
-3. **Migrations.** Production migrations are not automatic. Run them by hand against the Neon database, with the Neon URL in place of the placeholder:
+3. **Migrations.** Production migrations are not automatic. Run them by hand against the Neon database, with the Neon URL in place of the placeholder. The value is the `DATABASE_URL` that the Neon integration added. Read it in Vercel under Settings → Environment Variables:
 
    ```bash
    DATABASE_URL=<neon url> npm run db:migrate
@@ -100,10 +100,10 @@ With `DRY_RUN=true`, the full flow, the caps and the templates run, but no Unipi
 
    Accepted links look like `linkedin.com/in/<slug>`. They can have `www.` or a country subdomain, a trailing slash, a query string, or a two-letter language suffix such as `/in/<slug>/en`. Other links (Sales Navigator, company pages) are rejected with an error on that line.
 3. Press Start.
-4. Wait a few ticks. Then check two things:
+4. Wait for a few ticks. Ticks act only inside the active window (by default Mon–Fri, 08:30–19:00, `Europe/Paris`; editable in Settings), so a dry run started in the evening or at a weekend shows nothing until the next window opens. Each tick takes at most one action, and ticks run every 5 minutes, so 3 leads take 15 minutes or more. Then check two things:
    - The event log shows `would send: …` lines.
-   - Each lead's company and position look right. This also confirms the `work_experience` field mapping against a real Unipile response.
-5. Remove the leads that were processed during the dry run. They carry dry-run invitation and chat ids, so their next step would fail once `DRY_RUN` is off.
+   - In the lead table on the dashboard, under each name, the line with position and company looks right. This also confirms the `work_experience` field mapping against a real Unipile response.
+5. Remove the leads that were processed during the dry run. Otherwise they would never be contacted for real: a lead that got a dry-run message fails at its next step once `DRY_RUN` is off, and a lead that got a dry-run invite sits in `invite_sent` until it expires after 21 days, without ever being invited. Removing a lead keeps its events, so the dry run's invites and messages still count against today's caps and, for invites, the rolling 7 days.
 6. Set `DRY_RUN=false` in Vercel and redeploy.
 7. Paste your real list and press Start.
 
@@ -117,3 +117,4 @@ With `DRY_RUN=true`, the full flow, the caps and the templates run, but no Unipi
 
 - Unipile: 49 EUR per month, which covers up to 10 accounts, after a 7-day free trial.
 - Vercel Hobby, Neon free tier and cron-job.org: free.
+- Vercel's Hobby plan is for personal, non-commercial use. Commercial use needs the Pro plan.
