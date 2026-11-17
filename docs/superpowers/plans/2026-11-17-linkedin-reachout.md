@@ -66,12 +66,12 @@ npm install -D vitest drizzle-kit @types/luxon
 ```ts
 const full = {
   UNIPILE_DSN: 'api1.unipile.com:13111', UNIPILE_API_KEY: 'k', UNIPILE_ACCOUNT_ID: 'acc_1',
-  DATABASE_URL: 'pglite:./.data/dev', APP_PASSWORD: 'pw', CRON_SECRET: 'cron', WEBHOOK_SECRET: 'hook',
+  DATABASE_URL: 'pglite:./.data/dev', APP_PASSWORD: 'correct-horse-battery', CRON_SECRET: 'c'.repeat(32), WEBHOOK_SECRET: 'w'.repeat(32),
 };
 it('parses every variable', () => {
   expect(parseEnv(full)).toEqual({
     unipileDsn: 'api1.unipile.com:13111', unipileApiKey: 'k', unipileAccountId: 'acc_1',
-    databaseUrl: 'pglite:./.data/dev', appPassword: 'pw', cronSecret: 'cron', webhookSecret: 'hook', dryRun: false,
+    databaseUrl: 'pglite:./.data/dev', appPassword: 'correct-horse-battery', cronSecret: 'c'.repeat(32), webhookSecret: 'w'.repeat(32), dryRun: false,
   });
 });
 it('reads DRY_RUN=true as true and any other value as false', () => {
@@ -82,6 +82,15 @@ it('lists every missing variable in one error, empty strings included', () => {
   expect(() => parseEnv({ UNIPILE_DSN: 'x', UNIPILE_API_KEY: '' })).toThrow(
     'Missing environment variables: UNIPILE_API_KEY, UNIPILE_ACCOUNT_ID, DATABASE_URL, APP_PASSWORD, CRON_SECRET, WEBHOOK_SECRET',
   );
+});
+// Added after the Task 14 review: the app is public, so weak secrets are refused at startup.
+it('refuses secrets that are too short, listing each with its minimum', () => {
+  expect(() => parseEnv({ ...full, APP_PASSWORD: 'short', WEBHOOK_SECRET: 'hook' })).toThrow(
+    'Environment variables too short: APP_PASSWORD (min 16), WEBHOOK_SECRET (min 32). Generate each with: openssl rand -base64 32',
+  );
+});
+it('accepts secrets at exactly the minimum length', () => {
+  expect(parseEnv({ ...full, APP_PASSWORD: 'p'.repeat(16) }).appPassword).toBe('p'.repeat(16));
 });
 ```
 
@@ -1322,19 +1331,19 @@ it('lists only the three public paths', () => {
 - [ ] **Step 2: Run** `npm test -- src/lib/auth`. Expected: FAIL, module not found.
 - [ ] **Step 3: Implement** the session module, `requireSession`, `createEngineDeps`, the login page and action, the two routes and the request filter. Check the installed Next.js major in `package.json`: on 16 or newer the filter is `src/proxy.ts` exporting `proxy`; on 15 it is `src/middleware.ts` exporting `middleware`.
 - [ ] **Step 4: Run** `npm test && npm run typecheck && npm run build`. Expected: PASS.
-- [ ] **Step 5: Manual check.** Put `DATABASE_URL=pglite:./.data/dev`, dummy Unipile values, `CRON_SECRET=cron` and `WEBHOOK_SECRET=hook` in `.env.local`, then run `npm run dev`. Expected codes, in order: 401, 202, 401, `{"outcome":"ignored"}`, 307.
+- [ ] **Step 5: Manual check.** Put `DATABASE_URL=pglite:./.data/dev`, dummy Unipile values, an `APP_PASSWORD` of at least 16 characters, and a `CRON_SECRET` and a `WEBHOOK_SECRET` of at least 32 characters in `.env.local` (export the last two in your shell for the curl lines), then run `npm run dev`. Expected codes, in order: 401, 202, 401, `{"outcome":"ignored"}`, 307.
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3000/api/tick
 ```
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' -H 'Authorization: Bearer cron' http://localhost:3000/api/tick
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/tick
 ```
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' -X POST -d '{}' http://localhost:3000/api/webhooks/unipile
 ```
 ```bash
-curl -s -X POST -H 'Unipile-Auth: hook' -H 'Content-Type: application/json' -d '{"event":"message_read"}' http://localhost:3000/api/webhooks/unipile
+curl -s -X POST -H "Unipile-Auth: $WEBHOOK_SECRET" -H 'Content-Type: application/json' -d '{"event":"message_read"}' http://localhost:3000/api/webhooks/unipile
 ```
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3000/

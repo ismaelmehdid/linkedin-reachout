@@ -31,9 +31,9 @@ Environment variables:
 | `UNIPILE_API_KEY` | Sent as `X-API-KEY` |
 | `UNIPILE_ACCOUNT_ID` | The LinkedIn account connected once in the Unipile dashboard |
 | `DATABASE_URL` | Neon connection string. `pglite:<dir>` uses a local PGlite database instead (development only) |
-| `APP_PASSWORD` | Dashboard login password |
-| `CRON_SECRET` | Required on `/api/tick` |
-| `WEBHOOK_SECRET` | Expected in the `Unipile-Auth` header on webhook calls |
+| `APP_PASSWORD` | Dashboard login password, at least 16 characters |
+| `CRON_SECRET` | Required on `/api/tick`. At least 32 characters; generate with `openssl rand -base64 32` |
+| `WEBHOOK_SECRET` | Expected in the `Unipile-Auth` header on webhook calls. At least 32 characters; generate with `openssl rand -base64 32` |
 | `DRY_RUN` | When `true`, no Unipile write endpoint is called |
 
 The LinkedIn account is connected manually in the Unipile dashboard. There is no hosted-auth flow in the app.
@@ -42,6 +42,7 @@ The LinkedIn account is connected manually in the Unipile dashboard. There is no
 
 - Next.js middleware requires a signed session cookie on every page and API route, except `/api/tick`, `/api/webhooks/unipile` and the login route.
 - Login compares the submitted password with `APP_PASSWORD` (constant-time) and sets the signed cookie.
+- The app refuses to start with weak secrets: `APP_PASSWORD` under 16 characters, or `CRON_SECRET` or `WEBHOOK_SECRET` under 32. The app is public, and the only brake on password guessing is a 1 s wait per wrong attempt.
 - `/api/tick` rejects requests without the header `Authorization: Bearer <CRON_SECRET>`.
 - `/api/webhooks/unipile` rejects requests without `Unipile-Auth: <WEBHOOK_SECRET>`. Unipile v1 webhooks are not signed, so this header is the only check.
 
