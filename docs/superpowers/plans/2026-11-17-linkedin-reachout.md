@@ -228,7 +228,13 @@ it('reports invalid lines and still adds the valid ones', async () =>
   - `INVITE_NOTE_MAX_LENGTH = 300`.
 - The module is pure, with no Node or DB imports: the settings page imports it in a client component (Task 16).
 
-Grammar: a tag is `{{`, optional spaces, a name matching `[a-z_]+`, optional spaces, an optional `|fallback`, then `}}`. The fallback is any characters except `}`, trimmed. A value is missing when it is null, undefined or only whitespace; inserted values are trimmed. An unknown name counts as missing. `missing` keeps the order of first appearance, without repeats. A `{{` without a matching tag gives `invalid_syntax`.
+Grammar:
+- A tag is `{{`, optional spaces, a name, optional spaces, an optional `|fallback`, then `}}`.
+- A name is one or more characters other than whitespace, `|`, `{` and `}`. Names are case-sensitive, and only the six names above are known. A complete tag with any other name (for example `{{First_Name}}`) is an unknown variable: `unknown_variable` in `validateTemplate`, missing in `renderTemplate`. It is not an unclosed tag.
+- The fallback is any characters except `{` and `}`, trimmed. A fallback that contains `{{` makes the template invalid: `unclosed_tag` in `validateTemplate`, `invalid_syntax` in `renderTemplate`.
+- A value is missing when it is null, undefined or only whitespace; inserted values are trimmed.
+- `missing` keeps the order of first appearance, without repeats.
+- A `{{` without a matching tag gives `invalid_syntax`. So does a rendered text that still contains `{{`, for example because a lead's own value contains it: `renderTemplate` never returns `ok: true` with `{{` in the text.
 
 - [ ] **Step 1: Write the failing tests:**
 
