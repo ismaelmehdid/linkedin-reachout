@@ -800,7 +800,7 @@ it('records the dry-run flag and the text on the invite event', async () => {
 **Interfaces:**
 - Consumes: `failLead`, `handleActionError`, `ActionOutcome` (Task 9); `statusAfterMessage`, `nextDueAfterSend`, `renderForLead`, `logEvent`, `resetErrorStreak` (Task 8).
 - Produces: `runMessageAction(deps, lead: Lead, step: MessageStep, settings: Settings): Promise<ActionOutcome>`. In order:
-  1. For `followup_1` and `followup_2` with a `chatId`, call `listChatMessages(chatId, 50)`. If any message has `!isSender` and a timestamp after `lead.sequenceStartedAt`, set status `replied`, `nextActionAt null`, `lastAction 'reply_received'`, `lastActionAt = that timestamp`, and return `replied`. Errors here go to `handleActionError(kind: 'message')`.
+  1. For every step, when the lead has a `chatId`, call `listChatMessages(chatId, 50)`. This includes `first_message`: after an invite with a note the lead already has the note's chat, and a lead who answered the note must not get the first message. If any message has `!isSender` and a timestamp after `lead.sequenceStartedAt` (a message from the lead whose timestamp cannot be parsed also counts), set status `replied`, `nextActionAt null`, `lastAction 'reply_received'`, `lastActionAt = that timestamp`, and return `replied`. Errors here go to `handleActionError(kind: 'message')`.
   2. Render the step's template: `firstMessage`, `followup1` or `followup2`. If rendering fails, `failLead` with `missing_variable: …` or `invalid_template`.
   3. Send with `sendMessage(chatId, text)` when there is a `chatId`, otherwise `startChat(providerId, text)`. Log `message_sent` with `{ step, text, dryRun }`. Then update compare-and-set: `status = statusAfterMessage(step)`, `chatId`, `nextActionAt = nextDueAfterSend(...)`, `retryCount 0`, `lastAction = step`, `lastActionAt = now`, and reset the error streak. Return `messaged`; if the update matched no row, return `superseded`.
   4. Other errors go to `handleActionError(kind: 'message')`.
@@ -1006,7 +1006,7 @@ Order (spec §8, §13):
 8. Pick the action:
    - **Message**, when messages remain and `messagesPausedUntil` is not after now: a random due lead (`ORDER BY random()`, not paused, `nextActionAt <= now`) in a status of `MESSAGE_STEP_BY_STATUS`.
    - **Invite** otherwise, when invites and profile views remain and `invitesPausedUntil` is not after now: a random due `queued` lead.
-9. With a lead picked: `await sleep(Math.floor(random() × jitterMaxSeconds × 1000))`, then run the action.
+9. With a lead picked: `await sleep(Math.floor(random() × jitterMaxSeconds × 1000))`. Then re-read the lead by id. If it no longer exists, is paused, or its status differs from the one it was picked with, skip the action and report `{ leadId, result: 'superseded' }`: a reply, a manual message or a pause arrived during the wait. Otherwise run the action with the freshly read lead.
 
 - [ ] **Step 1: Write the failing tests** (`e = await createTestEngine()` and `e.fake.profiles.set('jane-doe', makeProfile())` in `beforeEach`):
 
@@ -1053,6 +1053,19 @@ it('sends no invite while invites are paused, and never picks a paused lead', as
   expect((await runTick(e.deps)).action).toBeNull();
   await updateAppState(e.db, { invitesPausedUntil: null }); await e.db.update(leads).set({ paused: true });
   expect((await runTick(e.deps)).action).toBeNull();
+});
+it('sends nothing when the lead replied during the random wait', async () => {
+  const lead = await acceptedDue();
+  e.deps.sleep = async () => { await e.db.update(leads).set({ status: 'replied' }).where(eq(leads.id, lead.id)); };
+  expect((await runTick(e.deps)).action).toEqual({ leadId: lead.id, result: 'superseded' });
+  expect(methods()).toEqual([]);
+});
+it('sends nothing when the lead was paused during the random wait', async () => {
+  const lead = await acceptedDue();
+  e.deps.sleep = async () => { await e.db.update(leads).set({ paused: true }).where(eq(leads.id, lead.id)); };
+  expect((await runTick(e.deps)).action).toEqual({ leadId: lead.id, result: 'superseded' });
+  expect(methods()).toEqual([]);
+  expect((await getLead(e.db, lead.id)).status).toBe('accepted');
 });
 it('auto-pauses after three 5xx errors in a row and keeps the lead queued', async () => { // Review Focus 3
   const lead = await queued();

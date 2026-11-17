@@ -87,7 +87,7 @@ Rules that apply at every step:
 
 - From `message_received`: a message is a reply when `sender.attendee_provider_id !== account_info.user_id` and the sender's provider id matches a lead.
 - A message where the sender is the account owner is treated as a manual outgoing message (see §6). For a lead in `invite_sent`, it is the acceptance signal described above instead. An owner message counts as manual only when it is more than 2 minutes newer than the lead's last recorded action. Anything else is ignored: the echo of the app's own send, a late or retried copy of the invite note, or an out-of-order delivery.
-- Before sending each follow-up, fetch the latest messages of the chat (`GET /api/v1/chats/{chat_id}/messages`) and abort if a reply exists, in case a webhook was missed.
+- Before sending any message in an existing chat (the first message after an invite with a note, and every follow-up), fetch the latest messages of the chat (`GET /api/v1/chats/{chat_id}/messages`) and abort if a reply exists, in case a webhook was missed.
 
 Webhooks are registered once in the Unipile dashboard with the header `Unipile-Auth: <WEBHOOK_SECRET>` and `Content-Type: application/json`. The handler returns 200 quickly (Unipile retries after 30 s).
 
@@ -105,7 +105,7 @@ Webhooks are registered once in the Unipile dashboard with the header `Unipile-A
 | Warm-up ramp | none |
 
 - Due messages take priority over new invites.
-- When several actions are due, one is picked at random.
+- When several actions are due, one is picked at random. After the random wait, the tick re-reads the picked lead and skips it if it changed in the meantime (a reply, a manual message, a pause).
 - Housekeeping runs before the outreach action of each tick and does not use its slot: marking `no_response`, up to 3 acceptance checks (profile views, inside the daily cap), at most 1 invite withdrawal, and the invite poll when it is due.
 - All values are editable in Settings.
 
