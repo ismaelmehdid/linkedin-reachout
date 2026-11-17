@@ -893,7 +893,7 @@ it('pauses messages until the next active day on a limit error', async () => {
     - On a `limit` or `transient` error: increment the error streak and return false; the lead stays.
     - On any other error: log `action_failed` and go on.
     - Then set status `invite_expired`, `nextActionAt null`, `lastAction 'invite_withdrawn'`.
-  - `runInvitePollIfDue(deps): Promise<boolean>`. It runs when `nextInvitePollAt` is null or `<= now` and at least one lead is in `invite_sent`.
+  - `runInvitePollIfDue(deps): Promise<boolean>`. It runs when `nextInvitePollAt` is null or `<= now` and at least one lead is in `invite_sent` with a real invitation. A lead whose `invitationId` starts with `DRY_RUN_ID_PREFIX` holds a dry-run invite that Unipile never saw; the poll ignores such leads entirely.
     - Call `listSentInvitations` once. A lead matches an invitation when `invitedUserId = providerId`, or `lower(invitedUserPublicId) = lower(publicIdentifier ?? slug)`.
     - For each `invite_sent` lead with `inviteSentAt <= now − INVITE_POLL_GRACE_MS` (600 000): if it matches and has no `invitationId`, store the id; if it does not match, set `acceptanceCheckPending`.
     - Then set `nextInvitePollAt = now + 3 h + random() × 2 h`.
@@ -962,6 +962,12 @@ it('polls sent invites, flags the ones that disappeared and stores missing ids',
   expect(await getLead(e.db, b.id)).toMatchObject({ acceptanceCheckPending: false, invitationId: 'inv_b' });
   expect((await getLead(e.db, fresh.id)).acceptanceCheckPending).toBe(false);
   expect((await getAppState(e.db)).nextInvitePollAt).toEqual(new Date('2026-11-17T13:00:00Z'));
+});
+it('ignores dry-run invites, which Unipile never saw', async () => {
+  const dry = await seedLead(e.db, { status: 'invite_sent', providerId: 'ACoD', invitationId: 'dry_inv_1', inviteSentAt: ago(48 * H) });
+  expect(await runInvitePollIfDue(e.deps)).toBe(false);
+  expect(e.fake.calls).toEqual([]);
+  expect((await getLead(e.db, dry.id)).acceptanceCheckPending).toBe(false);
 });
 it('does not poll before the next poll time or with no pending invite', async () => {
   expect(await runInvitePollIfDue(e.deps)).toBe(false);
