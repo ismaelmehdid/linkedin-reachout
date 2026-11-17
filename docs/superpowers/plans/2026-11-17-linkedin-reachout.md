@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - English only: code, comments, docs, commit messages, test names, UI copy.
-- Node 20 or newer.
+- Node 22.12 or newer (Vitest 5 needs it). `package.json` records the floor in `engines`.
 - Unipile API v1 only, always through `src/lib/unipile/client.ts`. Do not install `unipile-node-sdk`.
 - No `db.transaction()`: the neon-http driver has no interactive transactions. Use single conditional statements.
 - Code in `src/lib/engine/**` and `src/lib/webhooks/**` never calls `new Date()` without arguments, `Date.now()` or `Math.random()`. It uses `deps.now()`, `deps.random()`, `deps.sleep()`, or the `now`/`random` it receives.
