@@ -20,6 +20,7 @@
 - Insert every `events` row with an explicit `createdAt` equal to the injected now. Caps are counted from `events.createdAt`.
 - Every engine update of a lead's status is compare-and-set: `WHERE id = <id> AND status = <status when read>`. If no row matches, a webhook changed the lead first. Accept that; do not retry.
 - Detect "no row matched" on a conditional update with `.returning({ id: ... })` and an empty result. Never use a driver row count: neon-http exposes `rowCount` and PGlite exposes `affectedRows`.
+- Every lead update sets `updatedAt` to the injected now. Every write of `lastAction` also writes `lastActionAt`: the injected now, or the message time for a reply or a manual message received by webhook.
 - Never send text that still contains `{{`.
 - Store timestamps as `timestamptz` (UTC). Do local-time math only through `src/lib/schedule/window.ts`.
 - Defaults (spec §6, §8): 35 invites per day and 190 per rolling 7 days; 90 messages per day; 90 profile views per day; random wait 0–90 s; active window Mon–Fri 08:30–19:00 `Europe/Paris`; first message 60–180 min after acceptance; follow-up 1 after 2 days, follow-up 2 after 3 more, end after 3 more; invite expiry after 21 days; invite note at most 300 characters.
@@ -1118,7 +1119,7 @@ Rules. `msgAt` is `event.timestamp ?? now`. An `accountId` that differs from `op
 **Message from the owner:**
 - The chat must have exactly one other attendee, otherwise `ignored`. That attendee is the lead; no lead: `unknown_lead`.
 - `invite_sent`: set the flag and `chatId`. Outcome `acceptance_check`.
-- Lead's `lastAction` is a message step and `|msgAt − lastActionAt| <= ECHO_WINDOW_MS`: `ignored`. This is the echo of the app's own send.
+- Any other status, when `lastActionAt` is null or `msgAt <= lastActionAt + ECHO_WINDOW_MS`: `ignored`, and the lead is not changed. Such a message is the echo of the app's own send, a late or retried copy of the invite note, or an out-of-order delivery. The rule fails safe: ignoring a real manual message only means the app still sends its own message, but counting the invite note as a manual message would silently cancel the first message.
 - `accepted` / `already_connected`, compare-and-set: status `messaged`, `chatId`, `nextActionAt = nextDueAfterSend('messaged', msgAt)`, `lastAction 'manual_message'`. Outcome `manual_message`.
 - `messaged` / `followup_1` / `followup_2`: `nextActionAt = nextDueAfterSend(status, msgAt)`, `chatId` if null, `lastAction 'manual_message'`. Outcome `manual_message`.
 - Any other status: `ignored`.
@@ -1126,7 +1127,7 @@ Rules. `msgAt` is `event.timestamp ?? now`. An `accountId` that differs from `op
 **`new_relation`:**
 - Find a lead with `providerId = event.providerId`, or `lower(slug)` / `lower(publicIdentifier)` equal to `lower(event.publicIdentifier)`. No lead: `unknown_lead`.
 - Not in `invite_sent`: `ignored`.
-- Otherwise, compare-and-set: `accepted`, `nextActionAt = firstMessageDueAt(now, random, delays)`, flag cleared, `lastAction 'accepted'`.
+- Otherwise, compare-and-set: `accepted`, `nextActionAt = firstMessageDueAt(now, random, delays)`, flag cleared, `lastAction 'accepted'`, `lastActionAt = now`.
 
 - [ ] **Step 1: Write the failing tests:**
 
@@ -1184,6 +1185,18 @@ it('ignores the echo of a message the app just sent', async () => {
     lastActionAt: new Date('2026-11-17T07:59:30Z'), nextActionAt: new Date('2026-11-19T07:59:30Z') });
   expect((await handle(message(fromMe))).outcome).toBe('ignored');
   expect((await getLead(db, lead.id)).nextActionAt).toEqual(new Date('2026-11-19T07:59:30Z'));
+});
+it('ignores a late copy of the invite note after the lead was accepted', async () => {
+  const lead = await seedLead(db, { status: 'accepted', providerId: 'ACoJane', lastAction: 'accepted',
+    lastActionAt: new Date('2026-11-17T08:30:00Z'), nextActionAt: new Date('2026-11-17T10:30:00Z') });
+  expect((await handle(message(fromMe))).outcome).toBe('ignored');
+  expect(await getLead(db, lead.id)).toMatchObject({ status: 'accepted', nextActionAt: new Date('2026-11-17T10:30:00Z') });
+});
+it('never moves a follow-up earlier because of an old owner message', async () => {
+  const lead = await seedLead(db, { status: 'messaged', providerId: 'ACoJane', lastAction: 'first_message',
+    lastActionAt: new Date('2026-11-17T08:30:00Z'), nextActionAt: new Date('2026-11-19T08:30:00Z') });
+  expect((await handle(message(fromMe))).outcome).toBe('ignored');
+  expect((await getLead(db, lead.id)).nextActionAt).toEqual(new Date('2026-11-19T08:30:00Z'));
 });
 it('ignores group chats and other accounts', async () => {
   await seedLead(db, { status: 'invite_sent', providerId: 'ACoJane' });

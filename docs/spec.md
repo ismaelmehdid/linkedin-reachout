@@ -86,7 +86,7 @@ Rules that apply at every step:
 ### Replies
 
 - From `message_received`: a message is a reply when `sender.attendee_provider_id !== account_info.user_id` and the sender's provider id matches a lead.
-- A message where the sender is the account owner is treated as a manual outgoing message (see §6). For a lead in `invite_sent`, it is the acceptance signal described above instead. The echo of a message the app itself sent less than 2 minutes earlier is ignored.
+- A message where the sender is the account owner is treated as a manual outgoing message (see §6). For a lead in `invite_sent`, it is the acceptance signal described above instead. An owner message counts as manual only when it is more than 2 minutes newer than the lead's last recorded action. Anything else is ignored: the echo of the app's own send, a late or retried copy of the invite note, or an out-of-order delivery.
 - Before sending each follow-up, fetch the latest messages of the chat (`GET /api/v1/chats/{chat_id}/messages`) and abort if a reply exists, in case a webhook was missed.
 
 Webhooks are registered once in the Unipile dashboard with the header `Unipile-Auth: <WEBHOOK_SECRET>` and `Content-Type: application/json`. The handler returns 200 quickly (Unipile retries after 30 s).
