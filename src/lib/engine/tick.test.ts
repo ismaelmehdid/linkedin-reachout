@@ -200,6 +200,20 @@ describe('tick', () => {
     expect(e.fake.calls).toEqual([{ method: 'getProfile', args: ['ACoAnn'] }]);
     expect(e.sleeps).toEqual([]);
   });
+  it('stops before the outreach action when housekeeping meets an account error', async () => {
+    await updateAppState(e.db, { nextInvitePollAt: new Date('2026-11-17T12:00:00Z') });
+    const flagged = await seedLead(e.db, { status: 'invite_sent', providerId: 'ACoAnn', acceptanceCheckPending: true, nextActionAt: new Date('2026-12-08T09:00:00Z') });
+    const lead = await queued();
+    e.fake.failNext('getProfile', new UnipileError(403, 'errors/account_restricted', 'Restricted'));
+    expect(await runTick(e.deps)).toEqual({ status: 'paused', finished: 0, action: null });
+    expect(e.fake.calls).toEqual([{ method: 'getProfile', args: ['ACoAnn'] }]);
+    expect(e.sleeps).toEqual([]);
+    expect((await getLead(e.db, flagged.id)).acceptanceCheckPending).toBe(true);
+    expect((await getLead(e.db, lead.id)).status).toBe('queued');
+    expect((await getAppState(e.db)).pauseReason).toBe(
+      'Auto-paused: Unipile rejected the account (errors/account_restricted). Reconnect the LinkedIn account in Unipile, then press Start.',
+    );
+  });
   it('leaves the lock alone when another tick took it after its own lease ran out', async () => {
     await acceptedDue();
     const later = new Date(NOW.getTime() + TICK_LEASE_MS + 1000);

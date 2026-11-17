@@ -22,7 +22,7 @@ export const TICK_LEASE_MS = 240_000;
 
 /**
  * The outreach action is skipped for a tick whose housekeeping ended later than this after the tick's
- * start: too little of the function's lifetime is left for the random wait and the action.
+ * start: its random wait would have to be cut too short to keep the action inside the function's lifetime.
  */
 export const OUTREACH_START_BUDGET_MS = 30_000;
 
@@ -31,7 +31,8 @@ export const OUTREACH_START_BUDGET_MS = 30_000;
  * The HTTP function that runs a tick is killed at 180 s (the tick route's `maxDuration`), and a kill between
  * a send and its database write leaves a message that went out with no record of it. The slowest action
  * makes three Unipile calls, each cut off after `UNIPILE_TIMEOUT_MS` (20 s): find the chat, read it, send.
- * 110 s + 3 × 20 s = 170 s, below 180 s; a test of the tick route checks this sum.
+ * 110 s + 3 × 20 s = 170 s, which leaves 10 s for the database calls around them. A test of the tick
+ * route checks this sum against `maxDuration`.
  *
  * Housekeeping within `OUTREACH_START_BUDGET_MS` leaves at least 80 s, and a wait is at most
  * `MAX_JITTER_SECONDS`, so a wait is only ever cut short after slow housekeeping.
@@ -134,7 +135,7 @@ async function runLockedTick(deps: EngineDeps, now: Date): Promise<TickResult> {
 
   const state = await getAppState(db);
   if (!state.running) return { status: 'paused', finished, action: null };
-  // Housekeeping ran long: the wait and an action might not finish before the function is killed.
+  // Housekeeping ran long: the outreach action waits for the next tick.
   if (deps.now().getTime() - now.getTime() > OUTREACH_START_BUDGET_MS) return { status: 'done', finished, action: null };
 
   const picked = await pickAction(db, state, await readRemaining(), now);
@@ -143,6 +144,7 @@ async function runLockedTick(deps: EngineDeps, now: Date): Promise<TickResult> {
   // A stored wait above the validated maximum (an old row, or one edited by hand) is not trusted.
   const jitterSeconds = Math.min(settings.caps.jitterMaxSeconds, MAX_JITTER_SECONDS);
   const randomWaitMs = Math.floor(deps.random() * jitterSeconds * 1000);
+  // What is left of the time in which the action has to start.
   const waitBudgetMs = ACTION_START_BUDGET_MS - (deps.now().getTime() - now.getTime());
   await deps.sleep(Math.max(0, Math.min(randomWaitMs, waitBudgetMs)));
   return { ...(await runAfterWait(deps, picked, now)), finished };
