@@ -19,7 +19,9 @@ export type TemplateIssue =
 export const INVITE_NOTE_MAX_LENGTH = 300;
 
 // A tag: `{{`, optional spaces, a name, optional spaces, an optional `|fallback`, then `}}`.
-const TAG_PATTERN = /\{\{\s*([a-z_]+)\s*(?:\|([^}]*))?\}\}/g;
+// The name is any run of characters other than whitespace, `|`, `{` and `}` (case-sensitive);
+// the fallback is any characters except `{` and `}`.
+const TAG_PATTERN = /\{\{\s*([^\s|{}]+)\s*(?:\|([^{}]*))?\}\}/g;
 
 const KNOWN_VARIABLES: ReadonlySet<string> = new Set(TEMPLATE_VARIABLES);
 
@@ -40,6 +42,8 @@ export function renderTemplate(template: string, values: TemplateValues): Render
   });
 
   if (missing.length > 0) return { ok: false, reason: 'missing_variable', missing };
+  // A lead's own value may contain `{{`; never let it through.
+  if (text.includes('{{')) return { ok: false, reason: 'invalid_syntax' };
   return { ok: true, text };
 }
 
