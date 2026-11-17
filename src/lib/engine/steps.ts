@@ -6,6 +6,12 @@ export type StepKind = 'invite' | 'expire_invite' | 'first_message' | 'followup_
 
 export type MessageStep = 'first_message' | 'followup_1' | 'followup_2';
 
+/**
+ * How long after a lead's last recorded action an outgoing message still counts as part of it. Recorded
+ * times and LinkedIn's clock can differ by a few seconds, and the app records a step before LinkedIn stamps it.
+ */
+export const ECHO_WINDOW_MS = 120_000;
+
 /** The statuses that wait for a message, and the message each one sends. */
 export const MESSAGE_STEP_BY_STATUS = {
   accepted: 'first_message',

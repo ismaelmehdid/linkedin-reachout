@@ -51,7 +51,7 @@ async function markAlreadyConnected(deps: EngineDeps, lead: Lead, settings: Sett
   return { leadId: lead.id, result: marked ? 'already_connected' : 'superseded' };
 }
 
-/** `invitationId` is null when LinkedIn says this person was already invited recently. */
+/** `invitationId` is null when LinkedIn says this person was already invited recently, or when the answer to the invite held no id. */
 function markInviteSent(db: Db, lead: Lead, invitationId: string | null, now: Date, settings: Settings): Promise<boolean> {
   return updateLeadIfStatus(
     db,
@@ -106,7 +106,8 @@ export async function runInviteAction(deps: EngineDeps, lead: Lead, settings: Se
     return outcome('failed');
   }
 
-  let invitationId: string;
+  // Null when Unipile accepted the invite without naming it; the poll stores the id later.
+  let invitationId: string | null;
   try {
     ({ invitationId } = await deps.unipile.sendInvitation(profile.providerId, note.text));
   } catch (err) {

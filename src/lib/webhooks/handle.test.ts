@@ -90,11 +90,38 @@ describe('processWebhook', () => {
     expect((await listEvents(db)).map((x) => [x.type, x.payload])).toEqual([['webhook_received', { event: 'message_read', outcome: 'ignored' }]]);
   });
 
-  it('ignores a late copy of the invite note after the lead was accepted', async () => {
+  it('ignores a late copy of the invite note after the lead was accepted, but keeps its chat', async () => {
     const lead = await seedLead(db, { status: 'accepted', providerId: 'ACoJane', lastAction: 'accepted',
       lastActionAt: new Date('2026-11-17T08:30:00Z'), nextActionAt: new Date('2026-11-17T10:30:00Z') });
     expect((await handle(message(fromMe))).outcome).toBe('ignored');
-    expect(await getLead(db, lead.id)).toMatchObject({ status: 'accepted', nextActionAt: new Date('2026-11-17T10:30:00Z') });
+    // The tick reads this chat before the first message, so a reply to the note stops the sequence.
+    expect(await getLead(db, lead.id)).toMatchObject({ status: 'accepted', chatId: 'chat_1', nextActionAt: new Date('2026-11-17T10:30:00Z'),
+      lastAction: 'accepted', lastActionAt: new Date('2026-11-17T08:30:00Z'), updatedAt: NOW });
+  });
+
+  it('keeps the chat a lead already has when it ignores an owner message from another chat', async () => {
+    const lead = await seedLead(db, { status: 'messaged', providerId: 'ACoJane', chatId: 'chat_0', lastAction: 'first_message',
+      lastActionAt: new Date('2026-11-17T07:59:30Z') });
+    expect((await handle(message(fromMe))).outcome).toBe('ignored');
+    expect(await getLead(db, lead.id)).toEqual(lead);
+  });
+
+  it('ignores an owner message without a time, except for a lead waiting for acceptance', async () => {
+    const undated = message({ ...fromMe, timestamp: undefined });
+    const accepted = await seedLead(db, { status: 'accepted', providerId: 'ACoJane', lastAction: 'accepted', lastActionAt: new Date('2026-11-17T06:00:00Z') });
+    expect(await handle(undated)).toEqual({ outcome: 'ignored', leadId: accepted.id });
+    expect(await getLead(db, accepted.id)).toMatchObject({ status: 'accepted', chatId: 'chat_1', lastAction: 'accepted' });
+
+    const due = new Date('2026-11-18T09:00:00Z');
+    const followedUp = await seedLead(db, { status: 'followup_1', providerId: 'ACoBob', chatId: 'chat_2', lastAction: 'followup_1',
+      lastActionAt: new Date('2026-11-15T09:00:00Z'), nextActionAt: due });
+    const toBob = { ...undated, chat_id: 'chat_2', attendees: [{ attendee_provider_id: 'ACoMe' }, { attendee_provider_id: 'ACoBob' }] };
+    expect(await handle(toBob)).toEqual({ outcome: 'ignored', leadId: followedUp.id });
+    expect(await getLead(db, followedUp.id)).toMatchObject({ status: 'followup_1', nextActionAt: due, lastAction: 'followup_1' });
+
+    const invited = await seedLead(db, { status: 'invite_sent', providerId: 'ACoAnn' });
+    const toAnn = { ...undated, chat_id: 'chat_3', attendees: [{ attendee_provider_id: 'ACoMe' }, { attendee_provider_id: 'ACoAnn' }] };
+    expect(await handle(toAnn)).toEqual({ outcome: 'acceptance_check', leadId: invited.id });
   });
 
   it('never moves a follow-up earlier because of an old owner message', async () => {

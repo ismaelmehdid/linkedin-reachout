@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { TICK_LEASE_MS } from '@/lib/engine/tick';
+import { ACTION_START_BUDGET_MS, TICK_LEASE_MS } from '@/lib/engine/tick';
+import { UNIPILE_TIMEOUT_MS } from '@/lib/unipile/client';
 import { stubTestEnv, TEST_ENV } from '@/test-utils/env';
 import { GET, maxDuration } from './route';
 
@@ -16,6 +17,11 @@ describe('GET /api/tick', () => {
 
   it('is killed before its tick lease can expire, because releaseTickLock is unconditional', () => {
     expect(maxDuration * 1000).toBeLessThan(TICK_LEASE_MS);
+  });
+  it('leaves the slowest action time to finish before the function is killed', () => {
+    // A message for a lead with no known chat makes three Unipile calls: find the chat, read it, send.
+    const slowestActionMs = 3 * UNIPILE_TIMEOUT_MS;
+    expect(ACTION_START_BUDGET_MS + slowestActionMs).toBeLessThan(maxDuration * 1000);
   });
   it('answers 401 without exactly Bearer <CRON_SECRET>', async () => {
     for (const authorization of [undefined, 'Bearer wrong', `Bearer ${CRON}x`, CRON, `bearer ${CRON}`]) {

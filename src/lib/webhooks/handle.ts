@@ -3,12 +3,9 @@ import type { PgUpdateSetSource } from 'drizzle-orm/pg-core';
 import { leads, type Lead, type LeadStatus } from '@/db/schema';
 import type { Db } from '@/db/types';
 import { logEvent } from '@/lib/engine/events';
-import { firstMessageDueAt, nextDueAfterSend } from '@/lib/engine/steps';
+import { ECHO_WINDOW_MS, firstMessageDueAt, nextDueAfterSend } from '@/lib/engine/steps';
 import { getSettings } from '@/lib/settings/repo';
 import { parseWebhookPayload, type WebhookEvent } from './parse';
-
-/** How long after a lead's last recorded action an outgoing message still counts as part of it. */
-export const ECHO_WINDOW_MS = 120_000;
 
 export type WebhookOutcome = 'ignored' | 'unknown_lead' | 'replied' | 'acceptance_check' | 'accepted' | 'manual_message';
 
@@ -91,7 +88,6 @@ async function handleOwnMessage(db: Db, event: MessageEvent, opts: WebhookOption
   if (event.otherAttendeeProviderIds.length !== 1) return ignored(null);
   const lead = await findLeadByProviderId(db, event.otherAttendeeProviderIds[0]);
   if (!lead) return UNKNOWN_LEAD;
-  const msgAt = event.timestamp ?? opts.now;
 
   // Accepting an invite that had a note opens a chat with the note in it. A reply without accepting
   // does too, so the tick confirms the acceptance with a profile fetch.
@@ -100,7 +96,13 @@ async function handleOwnMessage(db: Db, event: MessageEvent, opts: WebhookOption
     return flagged ? { outcome: 'acceptance_check', leadId: lead.id } : ignored(lead.id);
   }
 
-  if (isAtOrBeforeLastAction(lead, msgAt)) return ignored(lead.id);
+  // A message without a time cannot be placed after the last action, so it is never a new manual step.
+  const msgAt = event.timestamp;
+  if (msgAt === null || isAtOrBeforeLastAction(lead, msgAt)) {
+    // Not a new step, but still the lead's chat: the tick reads it before the next message.
+    if (lead.chatId === null) await updateLead(db, lead.id, null, { chatId: chatIdIfNone(event.chatId) }, opts.now);
+    return ignored(lead.id);
+  }
 
   // A manual message counts as a step: before the first message it replaces it, after that it resets the timer.
   let patch: PgUpdateSetSource<typeof leads>;

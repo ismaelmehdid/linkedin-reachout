@@ -117,6 +117,12 @@ describe('invite action', () => {
     expect((await getLead(e.db, lead.id)).status).toBe('replied');
     expect((await listEvents(e.db)).map((x) => x.type)).toEqual(['profile_view', 'invite_sent']);
   });
+  it('records an invite that Unipile accepted without an invitation id', async () => {
+    e.deps.unipile = { ...e.fake, sendInvitation: async () => ({ invitationId: null }) };
+    expect((await run()).result).toBe('invited');
+    expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'invite_sent', invitationId: null, inviteSentAt: NOW, nextActionAt: new Date('2026-12-08T09:00:00Z') });
+    expect((await listEvents(e.db)).map((x) => x.type)).toEqual(['profile_view', 'invite_sent']);
+  });
   it('retries an unexpected non-Unipile error from the profile fetch', async () => {
     e.fake.failNext('getProfile', new TypeError('bug'));
     expect((await run()).result).toBe('retry');

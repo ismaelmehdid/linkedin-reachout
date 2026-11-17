@@ -25,12 +25,19 @@ export type ChatMessage = {
   text: string | null;
 };
 
+/**
+ * The three write methods resolve whenever Unipile accepted the write. An id is null when the answer
+ * did not carry one: the action still happened, so a caller must never treat a null id as a failure.
+ */
 export interface UnipileClient {
   getProfile(identifier: string): Promise<UnipileProfile>;
-  sendInvitation(providerId: string, message: string): Promise<{ invitationId: string }>;
+  sendInvitation(providerId: string, message: string): Promise<{ invitationId: string | null }>;
   listSentInvitations(): Promise<SentInvitation[]>;
   cancelInvitation(invitationId: string): Promise<void>;
-  startChat(providerId: string, text: string): Promise<{ chatId: string; messageId: string }>;
-  sendMessage(chatId: string, text: string): Promise<{ messageId: string }>;
-  listChatMessages(chatId: string, limit: number): Promise<ChatMessage[]>;
+  startChat(providerId: string, text: string): Promise<{ chatId: string | null; messageId: string | null }>;
+  sendMessage(chatId: string, text: string): Promise<{ messageId: string | null }>;
+  /** The id of the one-to-one chat with this person, or null when there is none. */
+  findChatWithAttendee(providerId: string): Promise<string | null>;
+  /** With `after`, only messages newer than that time. */
+  listChatMessages(chatId: string, limit: number, after?: Date): Promise<ChatMessage[]>;
 }

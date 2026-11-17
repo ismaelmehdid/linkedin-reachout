@@ -10,8 +10,9 @@ export function createDryRunClient(real: UnipileClient): UnipileClient {
   return {
     getProfile: (identifier) => real.getProfile(identifier),
     listSentInvitations: () => real.listSentInvitations(),
-    listChatMessages: async (chatId, limit) =>
-      chatId.startsWith(DRY_RUN_ID_PREFIX) ? [] : real.listChatMessages(chatId, limit),
+    findChatWithAttendee: (providerId) => real.findChatWithAttendee(providerId),
+    listChatMessages: async (chatId, limit, after) =>
+      chatId.startsWith(DRY_RUN_ID_PREFIX) ? [] : real.listChatMessages(chatId, limit, after),
     sendInvitation: async () => ({ invitationId: nextId('inv') }),
     cancelInvitation: async () => {},
     startChat: async () => ({ chatId: nextId('chat'), messageId: nextId('msg') }),

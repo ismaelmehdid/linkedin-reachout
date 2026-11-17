@@ -115,6 +115,67 @@ describe('createUnipileClient', () => {
     expect((await captured[0].formData()).get('text')).toBe('Yo');
   });
 
+  // A 2xx on a write endpoint means Unipile accepted it, whatever the body holds: it must never throw.
+  it.each([
+    ['an id that is null', () => json(201, { object: 'MessageSent', message_id: null })],
+    ['an empty id', () => json(201, { object: 'MessageSent', message_id: '' })],
+    ['no id', () => json(201, { object: 'MessageSent' })],
+    ['a body that is not JSON', () => new Response('OK', { status: 201 })],
+    ['a JSON body that is not an object', () => json(200, null)],
+    ['no body', () => new Response(null, { status: 204 })],
+  ])('reports a message as sent when the 2xx answer has %s', async (_label, answer) => {
+    responses.push(answer());
+    expect(await client.sendMessage('chat_1', 'Yo')).toEqual({ messageId: null });
+  });
+
+  it('reports a chat as started when the 2xx answer has no chat id or no message id', async () => {
+    responses.push(
+      json(201, { object: 'ChatStarted', chat_id: null, message_id: null }),
+      json(201, { object: 'ChatStarted', chat_id: 'chat_1' }),
+      new Response('<html>ok</html>', { status: 200 }),
+    );
+    expect(await client.startChat('ACoJane', 'Hello')).toEqual({ chatId: null, messageId: null });
+    expect(await client.startChat('ACoJane', 'Hello')).toEqual({ chatId: 'chat_1', messageId: null });
+    expect(await client.startChat('ACoJane', 'Hello')).toEqual({ chatId: null, messageId: null });
+  });
+
+  it('reports an invitation as sent when the 2xx answer has no invitation id', async () => {
+    responses.push(json(201, { object: 'UserInvitationSent' }), new Response('OK', { status: 201 }));
+    expect(await client.sendInvitation('ACoJane', 'Hi Jane')).toEqual({ invitationId: null });
+    expect(await client.sendInvitation('ACoJane', 'Hi Jane')).toEqual({ invitationId: null });
+  });
+
+  it('still raises a write that Unipile refused', async () => {
+    responses.push(json(422, { type: 'errors/invalid_recipient' }));
+    await expect(client.sendMessage('chat_1', 'Yo')).rejects.toMatchObject({ status: 422, type: 'errors/invalid_recipient' });
+  });
+
+  it('finds the chat with a person by provider id', async () => {
+    responses.push(
+      json(200, { object: 'ChatList', items: [{ object: 'Chat', id: 'chat_1', name: null }, { object: 'Chat', id: 'chat_2' }], cursor: null }),
+    );
+    expect(await client.findChatWithAttendee('ACo Jane')).toBe('chat_1');
+    expect(captured[0].method).toBe('GET');
+    expect(captured[0].url).toBe('https://api1.unipile.com:13111/api/v1/chat_attendees/ACo%20Jane/chats?account_id=acc_1');
+  });
+
+  it('finds no chat when the list is empty or Unipile does not know the person', async () => {
+    responses.push(
+      json(200, { object: 'ChatList', items: [], cursor: null }),
+      json(200, { object: 'ChatList' }),
+      json(404, { type: 'errors/resource_not_found', title: 'Attendee not found' }),
+    );
+    expect(await client.findChatWithAttendee('ACoJane')).toBeNull();
+    expect(await client.findChatWithAttendee('ACoJane')).toBeNull();
+    expect(await client.findChatWithAttendee('ACoJane')).toBeNull();
+  });
+
+  it('raises every other failure of the chat lookup', async () => {
+    responses.push(json(401, { type: 'errors/disconnected_account' }), json(200, { items: [{ object: 'Chat' }] }));
+    await expect(client.findChatWithAttendee('ACoJane')).rejects.toMatchObject({ status: 401, type: 'errors/disconnected_account' });
+    await expect(client.findChatWithAttendee('ACoJane')).rejects.toMatchObject({ status: 422, type: 'errors/invalid_response' });
+  });
+
   it('follows cursors when listing sent invitations', async () => {
     responses.push(
       json(200, { items: [{ id: 'i1', invited_user_id: 'ACo1', invited_user_public_id: 'one' }], cursor: 'c2' }),
@@ -156,6 +217,14 @@ describe('createUnipileClient', () => {
       { id: 'm3', isSender: true, timestamp: '2026-11-17T09:02:00Z', text: null },
     ]);
     expect(captured[0].url).toBe('https://api1.unipile.com:13111/api/v1/chats/chat_1/messages?limit=20');
+  });
+
+  it('asks only for the chat messages after a given time', async () => {
+    responses.push(json(200, { object: 'MessageList', items: [], cursor: null }));
+    expect(await client.listChatMessages('chat_1', 50, new Date('2026-11-10T09:00:00Z'))).toEqual([]);
+    expect(captured[0].url).toBe(
+      'https://api1.unipile.com:13111/api/v1/chats/chat_1/messages?limit=50&after=2026-11-10T09%3A00%3A00.000Z',
+    );
   });
 
   it('raises UnipileError with type and retry_after', async () => {

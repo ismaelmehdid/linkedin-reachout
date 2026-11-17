@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { leads } from '@/db/schema';
+import { leads, settingsTable } from '@/db/schema';
 import { saveSettings } from '@/lib/settings/repo';
 import { UnipileError } from '@/lib/unipile/errors';
 import { createTestEngine, getLead, listEvents, NOW, seedEvents, seedLead, type TestEngine } from '@/test-utils/engine';
@@ -37,7 +37,7 @@ describe('tick', () => {
   it('sends a due message before a queued invite, after a random wait', async () => {
     await acceptedDue(); await queued();
     expect((await runTick(e.deps)).action?.result).toBe('messaged');
-    expect(methods()).toEqual(['startChat']);
+    expect(methods()).toEqual(['findChatWithAttendee', 'startChat']);
     expect(e.sleeps).toEqual([45_000]);
   });
   it('falls back to an invite once 90 messages were sent today', async () => {
@@ -88,7 +88,7 @@ describe('tick', () => {
     await acceptedDue();
     e.deps.sleep = async () => { await saveSettings(e.db, { ...e.settings, templates: { ...e.settings.templates, firstMessage: 'Hello {{first_name}}' } }); };
     await runTick(e.deps);
-    expect(e.fake.calls).toEqual([{ method: 'startChat', args: ['ACoBob', 'Hello Bob'] }]);
+    expect(e.fake.calls.at(-1)).toEqual({ method: 'startChat', args: ['ACoBob', 'Hello Bob'] });
   });
   it('sends nothing when the active window closed during the random wait', async () => {
     e.setNow(new Date('2026-11-17T17:59:30Z')); await acceptedDue();
@@ -105,11 +105,29 @@ describe('tick', () => {
     expect((await runTick(e.deps)).action).toBeNull();
     expect(methods()).toEqual(['getProfile']);
   });
+  it('waits at most 100 seconds, even when a longer wait is stored', async () => {
+    // A row written before the 100-second rule existed, or by hand: `saveSettings` would refuse it.
+    await e.db.update(settingsTable).set({ value: { ...e.settings, caps: { ...e.settings.caps, jitterMaxSeconds: 300 } } });
+    await acceptedDue();
+    expect((await runTick(e.deps)).action?.result).toBe('messaged');
+    expect(e.sleeps).toEqual([50_000]);
+  });
+  it('cuts the random wait short after slow housekeeping, so the action still starts in time', async () => {
+    e = await createTestEngine({ random: 0.99, settings: (s) => ({ ...s, caps: { ...s.caps, jitterMaxSeconds: 100 } }) });
+    await seedLead(e.db, { status: 'invite_sent', providerId: 'ACoSlow', acceptanceCheckPending: true, inviteSentAt: NOW, nextActionAt: new Date('2026-12-08T09:00:00Z') });
+    e.fake.profiles.set('ACoSlow', makeProfile({ providerId: 'ACoSlow' }));
+    await updateAppState(e.db, { nextInvitePollAt: new Date(NOW.getTime() + 3_600_000) });
+    // Housekeeping takes 25 s: inside its own budget, but a 99 s wait would start the action 124 s into the tick.
+    e.fake.onCall('getProfile', async () => { e.setNow(new Date(NOW.getTime() + 25_000)); });
+    await acceptedDue();
+    expect((await runTick(e.deps)).action?.result).toBe('messaged');
+    expect(e.sleeps).toEqual([85_000]);
+  });
   it('runs the action on the lead as it is after the random wait', async () => {
     const lead = await acceptedDue();
     e.deps.sleep = async () => { await e.db.update(leads).set({ firstName: 'Robert' }).where(eq(leads.id, lead.id)); };
     expect((await runTick(e.deps)).action).toEqual({ leadId: lead.id, result: 'messaged' });
-    expect(e.fake.calls).toEqual([{ method: 'startChat', args: ['ACoBob', 'Thanks Robert'] }]);
+    expect(e.fake.calls.at(-1)).toEqual({ method: 'startChat', args: ['ACoBob', 'Thanks Robert'] });
   });
   it('auto-pauses after three 5xx errors in a row and keeps the lead queued', async () => { // Review Focus 3
     const lead = await queued();

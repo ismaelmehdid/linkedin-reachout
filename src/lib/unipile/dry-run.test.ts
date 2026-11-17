@@ -22,4 +22,21 @@ describe('createDryRunClient', () => {
     expect(await dry.listSentInvitations()).toEqual([]);
     expect(real.calls.map((c) => c.method)).toEqual(['getProfile', 'listSentInvitations']);
   });
+
+  it('looks a chat up and reads a real chat as the live client does', async () => {
+    const real = createFakeUnipile();
+    const since = new Date('2026-11-10T09:00:00Z');
+    const note = { id: 'm1', isSender: true, timestamp: '2026-11-10T09:00:05.000Z', text: 'Hi Jane' };
+    real.chatByAttendee.set('ACoJane', 'chat_1');
+    real.chatMessages.set('chat_1', [note]);
+    const dry = createDryRunClient(real);
+    expect(await dry.findChatWithAttendee('ACoJane')).toBe('chat_1');
+    expect(await dry.findChatWithAttendee('ACoBob')).toBeNull();
+    expect(await dry.listChatMessages('chat_1', 50, since)).toEqual([note]);
+    expect(real.calls).toEqual([
+      { method: 'findChatWithAttendee', args: ['ACoJane'] },
+      { method: 'findChatWithAttendee', args: ['ACoBob'] },
+      { method: 'listChatMessages', args: ['chat_1', 50, since] },
+    ]);
+  });
 });

@@ -7,7 +7,10 @@ export type FakeUnipile = UnipileClient & {
   calls: { method: Method; args: unknown[] }[];
   profiles: Map<string, UnipileProfile>;
   sentInvitations: SentInvitation[];
+  /** Every message of each chat. `listChatMessages` returns them all: `after` is recorded, not applied. */
   chatMessages: Map<string, ChatMessage[]>;
+  /** The chat `findChatWithAttendee` finds for a provider id. */
+  chatByAttendee: Map<string, string>;
   failNext(method: Method, error: unknown): void;
   onCall(method: Method, hook: () => Promise<void>): void;
 };
@@ -34,6 +37,7 @@ export function createFakeUnipile(): FakeUnipile {
   const profiles = new Map<string, UnipileProfile>();
   const sentInvitations: SentInvitation[] = [];
   const chatMessages = new Map<string, ChatMessage[]>();
+  const chatByAttendee = new Map<string, string>();
   let invitationCount = 0;
   let messageCount = 0;
 
@@ -49,6 +53,7 @@ export function createFakeUnipile(): FakeUnipile {
     profiles,
     sentInvitations,
     chatMessages,
+    chatByAttendee,
     failNext(method, error) {
       failures.set(method, [...(failures.get(method) ?? []), error]);
     },
@@ -85,8 +90,12 @@ export function createFakeUnipile(): FakeUnipile {
       messageCount += 1;
       return { messageId: `msg_${messageCount}` };
     },
-    async listChatMessages(chatId, limit) {
-      await enter('listChatMessages', [chatId, limit]);
+    async findChatWithAttendee(providerId) {
+      await enter('findChatWithAttendee', [providerId]);
+      return chatByAttendee.get(providerId) ?? null;
+    },
+    async listChatMessages(chatId, limit, after) {
+      await enter('listChatMessages', after === undefined ? [chatId, limit] : [chatId, limit, after]);
       return chatMessages.get(chatId) ?? [];
     },
   };

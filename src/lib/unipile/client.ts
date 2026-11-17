@@ -5,6 +5,9 @@ import type { ChatMessage, NetworkDistance, SentInvitation, UnipileClient, Unipi
 const NETWORK_DISTANCES: readonly string[] = ['FIRST_DEGREE', 'SECOND_DEGREE', 'THIRD_DEGREE', 'OUT_OF_NETWORK'];
 const MAX_INVITATION_PAGES = 20;
 
+/** How long one call may take before it is cut off. The tick's time budget counts on it. */
+export const UNIPILE_TIMEOUT_MS = 20_000;
+
 const str = z.string().nullish();
 
 const profileSchema = z.looseObject({
@@ -53,9 +56,20 @@ const messagePageSchema = z.looseObject({
     .nullish(),
 });
 
-const invitationResultSchema = z.looseObject({ invitation_id: z.string() });
-const chatResultSchema = z.looseObject({ chat_id: z.string(), message_id: z.string() });
-const messageResultSchema = z.looseObject({ message_id: z.string() });
+const chatPageSchema = z.looseObject({
+  items: z.array(z.looseObject({ id: z.string().min(1) })).nullish(),
+});
+
+/**
+ * The id under `key` in the answer of a write endpoint, or null when it holds none. A 2xx answer means
+ * Unipile accepted the write, so its body is never a reason to throw: a caller that saw an error would
+ * send the same invitation or message again.
+ */
+function idOrNull(data: unknown, key: string): string | null {
+  if (typeof data !== 'object' || data === null) return null;
+  const value: unknown = (data as Record<string, unknown>)[key];
+  return typeof value === 'string' && value !== '' ? value : null;
+}
 
 function parseOrThrow<T>(schema: z.ZodType<T>, data: unknown): T {
   const result = schema.safeParse(data);
@@ -93,7 +107,7 @@ export function createUnipileClient(opts: {
   timeoutMs?: number;
 }): UnipileClient {
   const fetchImpl = opts.fetch ?? fetch;
-  const timeoutMs = opts.timeoutMs ?? 20_000;
+  const timeoutMs = opts.timeoutMs ?? UNIPILE_TIMEOUT_MS;
   const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(opts.dsn) ? opts.dsn : `https://${opts.dsn}`;
   const baseUrl = withScheme.replace(/\/+$/, '');
   const accountParam = `account_id=${encodeURIComponent(opts.accountId)}`;
@@ -168,7 +182,7 @@ export function createUnipileClient(opts: {
         JSON.stringify({ provider_id: providerId, account_id: opts.accountId, message }),
         true,
       );
-      return { invitationId: parseOrThrow(invitationResultSchema, data).invitation_id };
+      return { invitationId: idOrNull(data, 'invitation_id') };
     },
 
     async listSentInvitations() {
@@ -201,8 +215,7 @@ export function createUnipileClient(opts: {
         '/api/v1/chats',
         multipart({ account_id: opts.accountId, attendees_ids: providerId, text }),
       );
-      const parsed = parseOrThrow(chatResultSchema, data);
-      return { chatId: parsed.chat_id, messageId: parsed.message_id };
+      return { chatId: idOrNull(data, 'chat_id'), messageId: idOrNull(data, 'message_id') };
     },
 
     async sendMessage(chatId, text) {
@@ -211,13 +224,27 @@ export function createUnipileClient(opts: {
         `/api/v1/chats/${encodeURIComponent(chatId)}/messages`,
         multipart({ text }),
       );
-      return { messageId: parseOrThrow(messageResultSchema, data).message_id };
+      return { messageId: idOrNull(data, 'message_id') };
     },
 
-    async listChatMessages(chatId, limit) {
+    async findChatWithAttendee(providerId) {
+      let data: unknown;
+      try {
+        data = await request('GET', `/api/v1/chat_attendees/${encodeURIComponent(providerId)}/chats?${accountParam}`);
+      } catch (err) {
+        // Unipile answers 404 for a person who is in none of the account's chats.
+        if (err instanceof UnipileError && err.status === 404) return null;
+        throw err;
+      }
+      return parseOrThrow(chatPageSchema, data).items?.[0]?.id ?? null;
+    },
+
+    async listChatMessages(chatId, limit, after) {
+      // Unipile expects an ISO 8601 UTC time with milliseconds, which is what `toISOString` gives.
+      const afterParam = after ? `&after=${encodeURIComponent(after.toISOString())}` : '';
       const data = await request(
         'GET',
-        `/api/v1/chats/${encodeURIComponent(chatId)}/messages?limit=${encodeURIComponent(String(limit))}`,
+        `/api/v1/chats/${encodeURIComponent(chatId)}/messages?limit=${encodeURIComponent(String(limit))}${afterParam}`,
       );
       const parsed = parseOrThrow(messagePageSchema, data);
       return (parsed.items ?? []).map(

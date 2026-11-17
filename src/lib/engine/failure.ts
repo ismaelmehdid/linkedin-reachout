@@ -8,7 +8,10 @@ import type { EngineDeps } from './deps';
 import { logEvent } from './events';
 import { incrementErrorStreak, updateAppState } from './state';
 
-/** `deferred`: a limit or transient error. `superseded`: the compare-and-set update matched no row. */
+/**
+ * `deferred`: a limit or transient error left the lead as it is. `superseded`: nothing was sent, because the
+ * lead changed first (the compare-and-set update matched no row) or because the owner had written by hand.
+ */
 export type ActionOutcome = {
   leadId: number;
   result: 'invited' | 'already_connected' | 'already_invited' | 'messaged' | 'replied' | 'failed' | 'retry' | 'deferred' | 'superseded';

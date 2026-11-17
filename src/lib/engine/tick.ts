@@ -3,6 +3,7 @@ import { leads, type Lead, type LeadStatus } from '@/db/schema';
 import type { Db } from '@/db/types';
 import { isInActiveWindow } from '@/lib/schedule/window';
 import { getSettings } from '@/lib/settings/repo';
+import { MAX_JITTER_SECONDS } from '@/lib/settings/settings';
 import type { EngineDeps } from './deps';
 import type { ActionOutcome } from './failure';
 import { expireOneInvite, finishDueLeads, runAcceptanceChecks, runInvitePollIfDue } from './housekeeping';
@@ -20,12 +21,22 @@ import { getUsage, remainingCapacity, type Remaining } from './usage';
 export const TICK_LEASE_MS = 240_000;
 
 /**
- * The outreach action starts only if housekeeping ended within this time of the tick's start. The HTTP
- * function that runs a tick is killed at 180 s, and a kill between a send and its database write could send
- * the same message again on the next tick. 30 s of housekeeping + at most 90 s of random wait + one action
- * (two Unipile calls of at most 20 s each) = 160 s, below 180 s.
+ * The outreach action is skipped for a tick whose housekeeping ended later than this after the tick's
+ * start: too little of the function's lifetime is left for the random wait and the action.
  */
 export const OUTREACH_START_BUDGET_MS = 30_000;
+
+/**
+ * The outreach action starts within this time of the tick's start; the random wait is cut short to fit.
+ * The HTTP function that runs a tick is killed at 180 s (the tick route's `maxDuration`), and a kill between
+ * a send and its database write leaves a message that went out with no record of it. The slowest action
+ * makes three Unipile calls, each cut off after `UNIPILE_TIMEOUT_MS` (20 s): find the chat, read it, send.
+ * 110 s + 3 × 20 s = 170 s, below 180 s; a test of the tick route checks this sum.
+ *
+ * Housekeeping within `OUTREACH_START_BUDGET_MS` leaves at least 80 s, and a wait is at most
+ * `MAX_JITTER_SECONDS`, so a wait is only ever cut short after slow housekeeping.
+ */
+export const ACTION_START_BUDGET_MS = 110_000;
 
 export type TickResult = {
   status: 'locked' | 'paused' | 'outside_window' | 'done';
@@ -129,7 +140,11 @@ async function runLockedTick(deps: EngineDeps, now: Date): Promise<TickResult> {
   const picked = await pickAction(db, state, await readRemaining(), now);
   if (picked === null) return { status: 'done', finished, action: null };
 
-  await deps.sleep(Math.floor(deps.random() * settings.caps.jitterMaxSeconds * 1000));
+  // A stored wait above the validated maximum (an old row, or one edited by hand) is not trusted.
+  const jitterSeconds = Math.min(settings.caps.jitterMaxSeconds, MAX_JITTER_SECONDS);
+  const randomWaitMs = Math.floor(deps.random() * jitterSeconds * 1000);
+  const waitBudgetMs = ACTION_START_BUDGET_MS - (deps.now().getTime() - now.getTime());
+  await deps.sleep(Math.max(0, Math.min(randomWaitMs, waitBudgetMs)));
   return { ...(await runAfterWait(deps, picked, now)), finished };
 }
 
