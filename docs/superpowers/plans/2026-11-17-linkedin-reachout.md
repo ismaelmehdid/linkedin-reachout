@@ -19,6 +19,7 @@
 - Code in `src/lib/engine/**` and `src/lib/webhooks/**` never calls `new Date()` without arguments, `Date.now()` or `Math.random()`. It uses `deps.now()`, `deps.random()`, `deps.sleep()`, or the `now`/`random` it receives.
 - Insert every `events` row with an explicit `createdAt` equal to the injected now. Caps are counted from `events.createdAt`.
 - Every engine update of a lead's status is compare-and-set: `WHERE id = <id> AND status = <status when read>`. If no row matches, a webhook changed the lead first. Accept that; do not retry.
+- Detect "no row matched" on a conditional update with `.returning({ id: ... })` and an empty result. Never use a driver row count: neon-http exposes `rowCount` and PGlite exposes `affectedRows`.
 - Never send text that still contains `{{`.
 - Store timestamps as `timestamptz` (UTC). Do local-time math only through `src/lib/schedule/window.ts`.
 - Defaults (spec §6, §8): 35 invites per day and 190 per rolling 7 days; 90 messages per day; 90 profile views per day; random wait 0–90 s; active window Mon–Fri 08:30–19:00 `Europe/Paris`; first message 60–180 min after acceptance; follow-up 1 after 2 days, follow-up 2 after 3 more, end after 3 more; invite expiry after 21 days; invite note at most 300 characters.
@@ -329,14 +330,14 @@ it('adds calendar days at the same local time across a time change', () =>
 - Produces:
   - `type Settings = { templates: { inviteNote: string; firstMessage: string; followup1: string; followup2: string }; templatesSaved: boolean; delays: { firstMessageMinMinutes: number; firstMessageMaxMinutes: number; followup1Days: number; followup2Days: number; finishDays: number; inviteExpiryDays: number }; caps: { invitesPerDay: number; invitesPerWeek: number; messagesPerDay: number; profileViewsPerDay: number; jitterMaxSeconds: number }; window: ActiveWindow }`.
   - `DEFAULT_SETTINGS: Settings`, with the Global Constraints values and `templatesSaved: false`.
-  - `parseSettings(raw: unknown): Settings`: deep-merges `raw` over `DEFAULT_SETTINGS`, then checks types with Zod (numbers are `.int().min(0)`). It throws `ZodError` on bad types. Do not rely on nested Zod `.default()`, whose behavior differs between Zod 3 and 4.
+  - `parseSettings(raw: unknown): Settings`: deep-merges `raw` over `DEFAULT_SETTINGS`, then checks types with Zod (numbers are `.int().min(0)`). Arrays such as `window.days` are replaced whole, never merged by index. It throws `ZodError` on bad types. Do not rely on nested Zod `.default()`, whose behavior differs between Zod 3 and 4.
   - `validateSettings(s: Settings): string[]`.
   - `startBlockers(s: Settings): string[]`.
   - `getSettings(db: Db): Promise<Settings>`: returns `DEFAULT_SETTINGS` when no row exists.
   - `saveSettings(db: Db, input: unknown): Promise<{ ok: true; settings: Settings } | { ok: false; errors: string[] }>`. Zod issues become `<dotted.path>: <zod message>`. It stores the settings with `templatesSaved: true`.
 - Placeholder templates (exact copy): invite note `Hi {{first_name}}, I came across your profile and would be glad to connect.`; first message `Thanks for connecting, {{first_name}}! [Write your first message here.]`; follow-up 1 `Hi {{first_name}}, just bumping my previous message.`; follow-up 2 `Hi {{first_name}}, last note from me. Happy to chat whenever it suits you.`
 - `validateSettings` messages (exact):
-  - Template issues are prefixed with the labels `Invite note`, `First message`, `Follow-up 1`, `Follow-up 2`: `<label>: is empty`, `<label>: unknown variable {{<name>}}`, `<label>: has an unclosed {{`.
+  - Template issues are prefixed with the labels `Invite note`, `First message`, `Follow-up 1`, `Follow-up 2`: `<label>: is empty`, `<label>: unknown variable {{<name>}}`, `<label>: has an unclosed or malformed {{ }} tag`.
   - `Invite note: longer than 300 characters`, checked on the raw template.
   - `First message delay: minimum must not exceed maximum`.
   - `Active window: start must be before end`.
@@ -685,7 +686,7 @@ it('skips the invite note for leads that are already connected', () =>
     - `unknown`: when `retryCount` is 0, sets it to 1 (the lead stays due) and returns `retry`. Otherwise it calls `failLead` with reason `type ?? message` and returns `failed`.
   - `runInviteAction(deps, lead: Lead, settings: Settings): Promise<ActionOutcome>`. In order:
     1. `getProfile(lead.slug)`, then log `profile_view`.
-    2. If another lead already has this `providerId`, `failLead('duplicate_person')`.
+    2. If another lead (not this one) already has this `providerId`, `failLead('duplicate_person')`.
     3. Store the profile fields on the lead: `providerId`, `publicIdentifier`, names, `headline`, `location`, `company ← currentCompany`, `position ← currentPosition`.
     4. If the profile is `FIRST_DEGREE`: run `checkLeadTemplates(includeInvite: false)`, which may fail the lead. Otherwise set status `already_connected`, `sequenceStartedAt = now`, `nextActionAt = now`, `lastAction 'already_connected'`, and reset the error streak.
     5. Otherwise run `checkLeadTemplates(includeInvite: true)`, which may fail the lead.
@@ -878,7 +879,7 @@ it('pauses messages until the next active day on a limit error', async () => {
 - Create: `src/lib/engine/housekeeping.ts`, `src/lib/engine/housekeeping.test.ts`
 
 **Interfaces:**
-- Consumes: Tasks 8 and 9 (`logEvent`, state functions, `firstMessageDueAt`, `classifyUnipileError`).
+- Consumes: Tasks 7 and 8 (`classifyUnipileError`, `logEvent`, state functions, `firstMessageDueAt`).
 - Produces (all skip paused leads):
   - `finishDueLeads(db, now: Date): Promise<number>`: `followup_2` leads with `nextActionAt <= now` move to `no_response`, with `nextActionAt null` and `lastAction 'no_response'`. No Unipile call.
   - `runAcceptanceChecks(deps, settings, maxProfileViews: number): Promise<number>`. It checks at most `min(ACCEPTANCE_CHECKS_PER_TICK = 3, maxProfileViews)` leads in `invite_sent` with `acceptanceCheckPending`.
