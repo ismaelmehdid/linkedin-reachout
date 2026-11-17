@@ -1006,7 +1006,7 @@ Order (spec §8, §13):
 8. Pick the action:
    - **Message**, when messages remain and `messagesPausedUntil` is not after now: a random due lead (`ORDER BY random()`, not paused, `nextActionAt <= now`) in a status of `MESSAGE_STEP_BY_STATUS`.
    - **Invite** otherwise, when invites and profile views remain and `invitesPausedUntil` is not after now: a random due `queued` lead.
-9. With a lead picked: `await sleep(Math.floor(random() × jitterMaxSeconds × 1000))`. Then re-read the lead by id. If it no longer exists, is paused, or its status differs from the one it was picked with, skip the action and report `{ leadId, result: 'superseded' }`: a reply, a manual message or a pause arrived during the wait. Otherwise run the action with the freshly read lead.
+9. With a lead picked: `await sleep(Math.floor(random() × jitterMaxSeconds × 1000))`. Then re-read the lead by id. If it no longer exists, is paused, has a different status from the one it was picked with, or is no longer due (`nextActionAt` null or after the tick's now), skip the action and report `{ leadId, result: 'superseded' }`: a reply, a manual message or a pause arrived during the wait. A manual message to a lead that already got the first message keeps its status and only moves `nextActionAt`, which is why the due check is needed. Otherwise run the action with the freshly read lead.
 
 - [ ] **Step 1: Write the failing tests** (`e = await createTestEngine()` and `e.fake.profiles.set('jane-doe', makeProfile())` in `beforeEach`):
 
