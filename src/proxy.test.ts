@@ -2,9 +2,11 @@ import { unstable_doesMiddlewareMatch } from 'next/experimental/testing/server';
 import { NextRequest } from 'next/server';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { createSessionToken, SESSION_COOKIE, SESSION_TTL_MS } from '@/lib/auth/session';
+import { TEST_ENV } from '@/test-utils/env';
 import { config, proxy } from './proxy';
 
 const ORIGIN = 'http://localhost:3000';
+const PASSWORD = TEST_ENV.APP_PASSWORD;
 
 const request = (path: string, token?: string) =>
   new NextRequest(`${ORIGIN}${path}`, token === undefined ? {} : { headers: { cookie: `${SESSION_COOKIE}=${token}` } });
@@ -13,7 +15,7 @@ const passes = (response: Response) => response.headers.get('x-middleware-next')
 
 describe('proxy', () => {
   beforeAll(() => {
-    vi.stubEnv('APP_PASSWORD', 'pw');
+    vi.stubEnv('APP_PASSWORD', PASSWORD);
   });
 
   it('runs on every path but static files, image optimization and the favicon', () => {
@@ -28,8 +30,8 @@ describe('proxy', () => {
     for (const path of ['/login', '/api/tick', '/api/webhooks/unipile']) expect(passes(await proxy(request(path))), path).toBe(true);
   });
   it('redirects pages to /login and answers 401 on the API without a valid session', async () => {
-    const expired = await createSessionToken('pw', new Date(Date.now() - SESSION_TTL_MS - 1));
-    const otherPassword = await createSessionToken('old-pw', new Date());
+    const expired = await createSessionToken(PASSWORD, new Date(Date.now() - SESSION_TTL_MS - 1));
+    const otherPassword = await createSessionToken('previous-app-password', new Date());
     for (const token of [undefined, 'garbage', expired, otherPassword]) {
       const page = await proxy(request('/settings', token));
       expect(page.status).toBe(307);
@@ -40,16 +42,16 @@ describe('proxy', () => {
     }
   });
   it('lets a valid session through', async () => {
-    const token = await createSessionToken('pw', new Date());
+    const token = await createSessionToken(PASSWORD, new Date());
     for (const path of ['/', '/settings', '/api/leads']) expect(passes(await proxy(request(path, token))), path).toBe(true);
   });
   it('lets nobody through while APP_PASSWORD is unset', async () => {
-    const token = await createSessionToken('pw', new Date());
+    const token = await createSessionToken(PASSWORD, new Date());
     vi.stubEnv('APP_PASSWORD', '');
     try {
       expect((await proxy(request('/settings', token))).status).toBe(307);
     } finally {
-      vi.stubEnv('APP_PASSWORD', 'pw');
+      vi.stubEnv('APP_PASSWORD', PASSWORD);
     }
   });
 });

@@ -2,7 +2,7 @@ import { after } from 'next/server';
 import { isAuthorizedBearer } from '@/lib/auth/session';
 import { createEngineDeps } from '@/lib/deps';
 import { runTick } from '@/lib/engine/tick';
-import { getEnv } from '@/lib/env';
+import { getEnv, type Env } from '@/lib/env';
 
 /**
  * Seconds before the platform kills this function (Vercel Hobby with Fluid compute allows up to 300).
@@ -12,7 +12,15 @@ import { getEnv } from '@/lib/env';
 export const maxDuration = 180;
 
 export async function GET(request: Request): Promise<Response> {
-  if (!isAuthorizedBearer(request.headers.get('authorization'), getEnv().cronSecret)) {
+  let env: Env;
+  try {
+    env = getEnv();
+  } catch (error) {
+    // The names go to the logs only; the caller learns nothing about the configuration.
+    console.error('tick: misconfigured environment', error instanceof Error ? error.message : error);
+    return Response.json({ error: 'misconfigured' }, { status: 500 });
+  }
+  if (!isAuthorizedBearer(request.headers.get('authorization'), env.cronSecret)) {
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   }
   after(async () => {
