@@ -159,6 +159,15 @@ describe('createUnipileClient', () => {
     expect(captured[0].url).toBe('https://api1.unipile.com:13111/api/v1/chat_attendees/ACo%20Jane/chats?account_id=acc_1');
   });
 
+  it('skips an InMail, sponsored or offer thread with the same person', async () => {
+    responses.push(
+      json(200, { items: [{ id: 'inmail_1', content_type: 'inmail' }, { id: 'ad_1', content_type: 'sponsored' }, { id: 'chat_3', content_type: null }] }),
+      json(200, { items: [{ id: 'offer_1', content_type: 'linkedin_offer' }] }),
+    );
+    expect(await client.findChatWithAttendee('ACoJane')).toBe('chat_3');
+    expect(await client.findChatWithAttendee('ACoJane')).toBeNull();
+  });
+
   it('finds no chat when the list is empty or Unipile does not know the person', async () => {
     responses.push(
       json(200, { object: 'ChatList', items: [], cursor: null }),

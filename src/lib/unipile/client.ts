@@ -57,7 +57,8 @@ const messagePageSchema = z.looseObject({
 });
 
 const chatPageSchema = z.looseObject({
-  items: z.array(z.looseObject({ id: z.string().min(1) })).nullish(),
+  // `content_type` is only set on LinkedIn threads that are not a plain conversation: inmail, sponsored, linkedin_offer.
+  items: z.array(z.looseObject({ id: z.string().min(1), content_type: str })).nullish(),
 });
 
 /**
@@ -243,7 +244,10 @@ export function createUnipileClient(opts: {
         if (err instanceof UnipileError && err.status === 404) return null;
         throw err;
       }
-      return parseOrThrow(chatPageSchema, data).items?.[0]?.id ?? null;
+      // The sequence runs in the plain conversation: an InMail or sponsored thread with the same person
+      // is neither read for replies nor written to.
+      const conversation = parseOrThrow(chatPageSchema, data).items?.find((chat) => !chat.content_type);
+      return conversation?.id ?? null;
     },
 
     async listChatMessages(chatId, limit, after) {

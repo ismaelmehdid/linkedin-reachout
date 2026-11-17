@@ -36,7 +36,7 @@ export interface UnipileClient {
   cancelInvitation(invitationId: string): Promise<void>;
   startChat(providerId: string, text: string): Promise<{ chatId: string | null; messageId: string | null }>;
   sendMessage(chatId: string, text: string): Promise<{ messageId: string | null }>;
-  /** The id of the one-to-one chat with this person, or null when there is none. */
+  /** The id of the one-to-one conversation with this person, or null when there is none. */
   findChatWithAttendee(providerId: string): Promise<string | null>;
   /** With `after`, only messages newer than that time. */
   listChatMessages(chatId: string, limit: number, after?: Date): Promise<ChatMessage[]>;
