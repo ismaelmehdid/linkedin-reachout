@@ -115,14 +115,17 @@ const TEMPLATE_LABELS: Record<keyof Settings['templates'], string> = {
   followup2: 'Follow-up 2',
 };
 
+const TEMPLATE_KEYS = Object.keys(TEMPLATE_LABELS) as (keyof Settings['templates'])[];
+
 function templateErrors(templates: Settings['templates']): string[] {
   const errors: string[] = [];
-  for (const key of Object.keys(TEMPLATE_LABELS) as (keyof Settings['templates'])[]) {
+  for (const key of TEMPLATE_KEYS) {
     const label = TEMPLATE_LABELS[key];
     const template = templates[key];
     for (const issue of validateTemplate(template)) {
       if (issue.kind === 'empty') errors.push(`${label}: is empty`);
       else if (issue.kind === 'unknown_variable') errors.push(`${label}: unknown variable {{${issue.name}}}`);
+      else if (issue.kind === 'single_brace') errors.push(`${label}: {${issue.name}} needs double braces`);
       else errors.push(`${label}: has an unclosed or malformed {{ }} tag`);
     }
     if (key === 'inviteNote' && template.length > INVITE_NOTE_MAX_LENGTH) {
@@ -147,10 +150,32 @@ function isKnownTimezone(timezone: string): boolean {
  */
 export const MAX_JITTER_SECONDS = 100;
 
+/** The most each cap may be set to: the limits Unipile documents for a paid LinkedIn account (spec §8). */
+const CAP_LIMITS: [keyof Settings['caps'], string, number][] = [
+  ['invitesPerDay', 'Invites per day', 80],
+  ['invitesPerWeek', 'Invites per 7 days', 200],
+  ['messagesPerDay', 'Messages per day', 100],
+  ['profileViewsPerDay', 'Profile views per day', 100],
+];
+
+/** The delays counted in days. With 0, a follow-up would go out on the tick after the previous message. */
+const DAY_DELAYS: [keyof Settings['delays'], string][] = [
+  ['followup1Days', 'Follow-up 1 delay'],
+  ['followup2Days', 'Follow-up 2 delay'],
+  ['finishDays', 'End delay'],
+  ['inviteExpiryDays', 'Invite expiry'],
+];
+
 export function validateSettings(s: Settings): string[] {
   const errors = templateErrors(s.templates);
   if (s.delays.firstMessageMinMinutes > s.delays.firstMessageMaxMinutes) {
     errors.push('First message delay: minimum must not exceed maximum');
+  }
+  for (const [key, label] of DAY_DELAYS) {
+    if (s.delays[key] < 1) errors.push(`${label}: must be at least 1 day`);
+  }
+  for (const [key, label, limit] of CAP_LIMITS) {
+    if (s.caps[key] > limit) errors.push(`${label}: must be ${limit} or less`);
   }
   if (s.caps.jitterMaxSeconds > MAX_JITTER_SECONDS) {
     errors.push(`Random wait: must be ${MAX_JITTER_SECONDS} seconds or less`);
@@ -162,7 +187,12 @@ export function validateSettings(s: Settings): string[] {
   return errors;
 }
 
+/**
+ * What stops Start. A template that is still its shipped draft blocks it too: saving the drafts is
+ * allowed, for example to change a cap first, but "[Write your first message here.]" must never be sent.
+ */
 export function startBlockers(s: Settings): string[] {
   if (!s.templatesSaved) return ['Save your templates in Settings first'];
-  return templateErrors(s.templates);
+  const placeholders = TEMPLATE_KEYS.filter((key) => s.templates[key].trim() === DEFAULT_SETTINGS.templates[key].trim());
+  return [...templateErrors(s.templates), ...placeholders.map((key) => `${TEMPLATE_LABELS[key]}: replace the placeholder text`)];
 }

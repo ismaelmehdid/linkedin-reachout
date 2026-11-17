@@ -39,4 +39,16 @@ describe('validateTemplate', () => {
       { kind: 'unknown_variable', name: 'first-name' },
     ]));
   it('flags unclosed tags', () => expect(validateTemplate('Hi {{first_name')).toEqual([{ kind: 'unclosed_tag' }]));
+  it('flags a known variable in single braces, which would be sent as written', () =>
+    expect(validateTemplate('Hi {first_name}, how is {{company}}?')).toEqual([{ kind: 'single_brace', name: 'first_name' }]));
+  it('flags it with spaces, a fallback or a stray closing brace, once per name', () =>
+    expect(validateTemplate('{ first_name } {company|your team} {first_name}} {location}')).toEqual([
+      { kind: 'single_brace', name: 'first_name' },
+      { kind: 'single_brace', name: 'company' },
+      { kind: 'single_brace', name: 'location' },
+    ]));
+  it('leaves other text in single braces alone', () =>
+    expect(validateTemplate('Hi {{first_name}} {sic} {firstname} { "a": 1 } {}')).toEqual([]));
+  it('reports a double-brace tag that lost a closing brace only as unclosed', () =>
+    expect(validateTemplate('Hi {{first_name}')).toEqual([{ kind: 'unclosed_tag' }]));
 });

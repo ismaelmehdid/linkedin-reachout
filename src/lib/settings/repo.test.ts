@@ -35,6 +35,23 @@ describe('settings repo', () => {
       errors: ['Follow-up 1: unknown variable {{firstname}}'],
     }));
 
+  it('rejects a known variable in single braces and stores nothing', async () => {
+    expect(await saveSettings(db, withTemplate('inviteNote', 'Hi {first_name}'))).toEqual({
+      ok: false,
+      errors: ['Invite note: {first_name} needs double braces'],
+    });
+    expect(await getSettings(db)).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it('rejects a cap above its limit and a delay of 0 days', async () => {
+    const result = await saveSettings(db, {
+      ...DEFAULT_SETTINGS,
+      caps: { ...DEFAULT_SETTINGS.caps, invitesPerDay: 350 },
+      delays: { ...DEFAULT_SETTINGS.delays, followup1Days: 0 },
+    });
+    expect(result).toEqual({ ok: false, errors: ['Follow-up 1 delay: must be at least 1 day', 'Invites per day: must be 80 or less'] });
+  });
+
   it('rejects a non-integer cap', async () => {
     const result = await saveSettings(db, { ...DEFAULT_SETTINGS, caps: { ...DEFAULT_SETTINGS.caps, invitesPerDay: Number.NaN } });
     expect(result.ok).toBe(false);

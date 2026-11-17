@@ -9,6 +9,7 @@ export const TEST_ENV = {
   APP_PASSWORD: 'correct-horse-battery',
   CRON_SECRET: 'c'.repeat(32),
   WEBHOOK_SECRET: 'w'.repeat(32),
+  DRY_RUN: 'true',
 };
 
 /** Stubs TEST_ENV into process.env. Call it before the first `getEnv()` of the test file: `getEnv` caches. */

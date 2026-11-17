@@ -67,10 +67,12 @@ describe('lead display', () => {
     expect(formatImportSummary({ added: 3, duplicates: [], invalid: [] })).toBe('3 added');
   });
 
-  it('lists the banners: dry run, auto-pause reason, and pauses that have not ended', () => {
+  it('lists the banners: dry run or live, auto-pause reason, and pauses that have not ended', () => {
     const opts = { dryRun: false, now: NOW, timezone: 'Europe/Paris' };
     const idle = { pauseReason: null, invitesPausedUntil: null, messagesPausedUntil: null };
-    expect(dashboardBanners(idle, opts)).toEqual([]);
+    // The mode is always said: a missing banner must never be the only sign that sends are real.
+    expect(dashboardBanners(idle, opts)).toEqual(['Live: actions are sent to LinkedIn']);
+    expect(dashboardBanners(idle, { ...opts, dryRun: true })).toEqual(['Dry run: nothing is sent to LinkedIn']);
     expect(
       dashboardBanners(
         {
@@ -86,6 +88,8 @@ describe('lead display', () => {
       'Invites paused until 2026-11-18 08:30',
       'Messages paused until 2026-11-17 11:00',
     ]);
-    expect(dashboardBanners({ ...idle, invitesPausedUntil: NOW, messagesPausedUntil: new Date('2026-11-17T08:00:00Z') }, opts)).toEqual([]);
+    expect(dashboardBanners({ ...idle, invitesPausedUntil: NOW, messagesPausedUntil: new Date('2026-11-17T08:00:00Z') }, opts)).toEqual([
+      'Live: actions are sent to LinkedIn',
+    ]);
   });
 });

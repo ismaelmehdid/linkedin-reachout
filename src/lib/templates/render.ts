@@ -14,6 +14,7 @@ export type RenderResult =
 export type TemplateIssue =
   | { kind: 'empty' }
   | { kind: 'unknown_variable'; name: string }
+  | { kind: 'single_brace'; name: string }
   | { kind: 'unclosed_tag' };
 
 export const INVITE_NOTE_MAX_LENGTH = 300;
@@ -23,10 +24,26 @@ export const INVITE_NOTE_MAX_LENGTH = 300;
 // the fallback is any characters except `{` and `}`.
 const TAG_PATTERN = /\{\{\s*([^\s|{}]+)\s*(?:\|([^{}]*))?\}\}/g;
 
+// The same shape in single braces, such as `{first_name}` or `{ company|your team }`.
+const SINGLE_BRACE_PATTERN = /\{\s*([^\s|{}]+)\s*(?:\|[^{}]*)?\}/g;
+
 const KNOWN_VARIABLES: ReadonlySet<string> = new Set(TEMPLATE_VARIABLES);
 
 function hasUnclosedTag(template: string): boolean {
   return template.replace(TAG_PATTERN, '').includes('{{');
+}
+
+/** The known variables written in single braces. Such a tag is not replaced: it would be sent as written. */
+function singleBraceVariables(template: string): string[] {
+  const rest = template.replace(TAG_PATTERN, '');
+  const names: string[] = [];
+  for (const match of rest.matchAll(SINGLE_BRACE_PATTERN)) {
+    // After a `{` it is a double-brace tag that lost a closing brace, which is reported as unclosed.
+    if (match.index > 0 && rest[match.index - 1] === '{') continue;
+    const name = match[1];
+    if (KNOWN_VARIABLES.has(name) && !names.includes(name)) names.push(name);
+  }
+  return names;
 }
 
 export function renderTemplate(template: string, values: TemplateValues): RenderResult {
@@ -59,6 +76,7 @@ export function validateTemplate(template: string): TemplateIssue[] {
       issues.push({ kind: 'unknown_variable', name });
     }
   }
+  for (const name of singleBraceVariables(template)) issues.push({ kind: 'single_brace', name });
   if (hasUnclosedTag(template)) issues.push({ kind: 'unclosed_tag' });
   return issues;
 }

@@ -53,13 +53,15 @@ export function formatImportSummary(result: ImportResult): string {
   return parts.join(' · ');
 }
 
-/** The dashboard's banners. A pause shows only while its end is after `now`, as the tick counts it. */
+/**
+ * The dashboard's banners. The first always says whether sends are real, so a missing banner is never
+ * the only sign of live sending. A pause shows only while its end is after `now`, as the tick counts it.
+ */
 export function dashboardBanners(
   state: Pick<AppState, 'pauseReason' | 'invitesPausedUntil' | 'messagesPausedUntil'>,
   opts: { dryRun: boolean; now: Date; timezone: string },
 ): string[] {
-  const banners: string[] = [];
-  if (opts.dryRun) banners.push('Dry run: nothing is sent to LinkedIn');
+  const banners = [opts.dryRun ? 'Dry run: nothing is sent to LinkedIn' : 'Live: actions are sent to LinkedIn'];
   if (state.pauseReason) banners.push(state.pauseReason);
   const addPauseBanner = (kind: string, until: Date | null) => {
     if (until !== null && until > opts.now) banners.push(`${kind} paused until ${formatLocal(until, opts.timezone)}`);

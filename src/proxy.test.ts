@@ -54,4 +54,24 @@ describe('proxy', () => {
       vi.stubEnv('APP_PASSWORD', PASSWORD);
     }
   });
+  it('lets nobody through while APP_PASSWORD is shorter than 16 characters, even with a session signed by it', async () => {
+    const short = 'fifteen-chars-0';
+    const token = await createSessionToken(short, new Date());
+    vi.stubEnv('APP_PASSWORD', short);
+    try {
+      expect((await proxy(request('/settings', token))).status).toBe(307);
+      expect((await proxy(request('/api/leads', token))).status).toBe(401);
+    } finally {
+      vi.stubEnv('APP_PASSWORD', PASSWORD);
+    }
+  });
+  it('reads APP_PASSWORD without the spaces around it, as the login does', async () => {
+    const token = await createSessionToken(PASSWORD, new Date());
+    vi.stubEnv('APP_PASSWORD', `  ${PASSWORD}\n`);
+    try {
+      expect(passes(await proxy(request('/settings', token)))).toBe(true);
+    } finally {
+      vi.stubEnv('APP_PASSWORD', PASSWORD);
+    }
+  });
 });
