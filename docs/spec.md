@@ -42,7 +42,7 @@ The LinkedIn account is connected manually in the Unipile dashboard. There is no
 
 - Next.js middleware requires a signed session cookie on every page and API route, except `/api/tick`, `/api/webhooks/unipile` and the login route.
 - Login compares the submitted password with `APP_PASSWORD` (constant-time) and sets the signed cookie.
-- The app refuses to start with weak secrets: `APP_PASSWORD` under 16 characters, or `CRON_SECRET` or `WEBHOOK_SECRET` under 32. The app is public, and the only brake on password guessing is a 1 s wait per wrong attempt.
+- The app refuses to run with weak secrets: every request fails while `APP_PASSWORD` is under 16 characters, or `CRON_SECRET` or `WEBHOOK_SECRET` is under 32. The app is public, and the only brake on password guessing is a 1 s wait per wrong attempt.
 - `/api/tick` rejects requests without the header `Authorization: Bearer <CRON_SECRET>`.
 - `/api/webhooks/unipile` rejects requests without `Unipile-Auth: <WEBHOOK_SECRET>`. Unipile v1 webhooks are not signed, so this header is the only check.
 
@@ -136,7 +136,7 @@ These defaults stay under the limits Unipile documents for paid accounts (80–1
 ## 11. Dashboard
 
 - Counters by status at the top; pause/limit banner when relevant.
-- One table: name, headline, URL, status, last action + date, next action + due date. Filter by status.
+- One table: name, headline, current role (position and company), URL, status, last action + date, next action + due date. Filter by status. The role line is where the owner checks, before going live, that company and position were read correctly.
 - Per-row actions: pause, retry (failed only; the lead goes back to the status it failed in), remove (deletes the lead but keeps its events, so caps stay correct; the person can be pasted again).
 - Settings page: templates with preview, delays, caps, active window.
 - No reply notifications in v1; the "Replied" filter is the inbox.
@@ -155,7 +155,7 @@ These defaults stay under the limits Unipile documents for paid accounts (80–1
 ## 14. Cost
 
 - Unipile: €49/month (covers up to 10 accounts), after a 7-day free trial.
-- Vercel Hobby, Neon free tier, cron-job.org: free.
+- Vercel Hobby, Neon free tier, cron-job.org: free. Vercel's Hobby plan is for personal, non-commercial use; commercial use needs the Pro plan.
 
 ## 15. References
 

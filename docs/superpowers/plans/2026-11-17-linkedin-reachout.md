@@ -1386,7 +1386,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3000/
   - **Import form:** a textarea and a summary, for example "2 added · 1 already contacted: jane-doe · 1 invalid: <line> (<error>)".
   - **Table:**
     - Status filter links (`/?status=replied`).
-    - Columns: name with the headline under it; LinkedIn link; status with the failure reason; last action and its date; next action and its due date.
+    - Columns: name with the headline and the current role under it (`leadRoleLine(lead)`: `<position> at <company>`, or the one that exists, or nothing); LinkedIn link; status with the failure reason; last action and its date; next action and its due date.
     - Row buttons: Pause or Resume; Retry for failed leads; Remove, behind `confirm('Remove this lead? Its history stays, and the person can be added again later.')`.
   - **Event log** of the last 50 events. `invite_sent` and `message_sent` events with `payload.dryRun` show `would send: <text>`.
   - All dates use `formatLocal` with `settings.window.timezone`.
