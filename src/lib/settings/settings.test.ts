@@ -48,6 +48,12 @@ describe('validateSettings', () => {
     expect(validateSettings({ ...DEFAULT_SETTINGS, window: { ...DEFAULT_SETTINGS.window, timezone: 'Mars/Base' } })).toEqual([
       'Active window: unknown timezone Mars/Base',
     ]));
+  it('rejects a random wait above 100 seconds', () =>
+    expect(validateSettings({ ...DEFAULT_SETTINGS, caps: { ...DEFAULT_SETTINGS.caps, jitterMaxSeconds: 101 } })).toEqual([
+      'Random wait: must be 100 seconds or less',
+    ]));
+  it('accepts a random wait of exactly 100 seconds', () =>
+    expect(validateSettings({ ...DEFAULT_SETTINGS, caps: { ...DEFAULT_SETTINGS.caps, jitterMaxSeconds: 100 } })).toEqual([]));
 });
 
 describe('startBlockers', () => {

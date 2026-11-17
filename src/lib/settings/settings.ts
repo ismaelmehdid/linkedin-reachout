@@ -141,10 +141,16 @@ function isKnownTimezone(timezone: string): boolean {
   }
 }
 
+const MAX_JITTER_SECONDS = 100;
+
 export function validateSettings(s: Settings): string[] {
   const errors = templateErrors(s.templates);
   if (s.delays.firstMessageMinMinutes > s.delays.firstMessageMaxMinutes) {
     errors.push('First message delay: minimum must not exceed maximum');
+  }
+  // The tick's 180 s budget holds 30 s of housekeeping, this wait and two Unipile calls of 20 s.
+  if (s.caps.jitterMaxSeconds > MAX_JITTER_SECONDS) {
+    errors.push(`Random wait: must be ${MAX_JITTER_SECONDS} seconds or less`);
   }
   // HH:MM strings are zero-padded, so string comparison is chronological.
   if (s.window.start >= s.window.end) errors.push('Active window: start must be before end');
