@@ -52,7 +52,16 @@ describe('lead templates', () => {
     });
     it('fails an invite note draft over 300 characters', () =>
       expect(checkLeadTemplates({ ...ai, inviteNoteDraft: 'x'.repeat(301) }, DEFAULT_SETTINGS, { includeInvite: true })).toEqual({ ok: false, reason: 'note_too_long: 301/300' }));
-    it.each(['none', 'pending', 'ready', 'failed'] as const)('renders the templates for a lead whose drafts are %s', (draftStatus) =>
-      expect(leadInviteNote({ ...ai, draftStatus }, DEFAULT_SETTINGS)).toEqual(renderForLead(DEFAULT_SETTINGS.templates.inviteNote, lead)));
+    it('renders the templates for a pasted lead, whose draft status is none', () => {
+      expect(leadInviteNote({ ...ai, draftStatus: 'none' }, DEFAULT_SETTINGS)).toEqual(renderForLead(DEFAULT_SETTINGS.templates.inviteNote, lead));
+      expect(leadMessageText({ ...ai, draftStatus: 'none' }, 'first_message', DEFAULT_SETTINGS)).toEqual(renderForLead(DEFAULT_SETTINGS.templates.firstMessage, lead));
+    });
+    it.each(['pending', 'generating', 'ready', 'failed'] as const)('never falls back to a template for a founder whose drafts are %s', (draftStatus) => {
+      const founder = { ...ai, draftStatus };
+      expect(leadInviteNote(founder, DEFAULT_SETTINGS)).toEqual({ ok: false, reason: 'draft_not_approved' });
+      expect(leadMessageText(founder, 'first_message', DEFAULT_SETTINGS)).toEqual({ ok: false, reason: 'draft_not_approved' });
+      expect(leadMessageText(founder, 'followup_1', DEFAULT_SETTINGS)).toEqual(renderForLead(DEFAULT_SETTINGS.templates.followup1, lead));
+      expect(checkLeadTemplates({ ...founder, firstMessageDraft: null }, DEFAULT_SETTINGS, { includeInvite: false })).toEqual({ ok: false, reason: 'draft_not_approved' });
+    });
   });
 });

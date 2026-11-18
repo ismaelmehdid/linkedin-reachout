@@ -254,6 +254,17 @@ describe('invite action', () => {
       expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'already_connected', nextActionAt: NOW, updatedAt: NOW });
       expect(methods()).toEqual(['getProfile']);
     });
+    it('fails with draft_not_approved and sends nothing when a founder\'s drafts are not approved', async () => {
+      expect((await runAi({ draftStatus: 'ready' })).result).toBe('failed');
+      expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'failed', failureReason: 'draft_not_approved' });
+      expect(methods()).toEqual(['getProfile']);
+    });
+    it('fails an already connected founder whose drafts are not approved', async () => {
+      e.fake.profiles.set('jane-ai', makeProfile({ networkDistance: 'FIRST_DEGREE' }));
+      lead = await seedAi({ draftStatus: 'pending', inviteNoteDraft: null, firstMessageDraft: null });
+      expect((await runInviteAction(e.deps, lead, e.settings)).result).toBe('failed');
+      expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'failed', failureReason: 'draft_not_approved' });
+    });
     it('fails an already connected lead whose first message draft is blank', async () => {
       e.fake.profiles.set('jane-ai', makeProfile({ networkDistance: 'FIRST_DEGREE' }));
       lead = await seedAi({ firstMessageDraft: ' ' });

@@ -73,7 +73,7 @@ function markInviteSent(db: Db, lead: Lead, invitationId: string | null, now: Da
 /**
  * Fetches the profile, checks every text against it, then sends the invite with its note.
  * All four texts are checked first, so a value a later message needs fails the lead before anyone is contacted.
- * An AI lead sends its approved note as written; its missing draft fails it and never falls back to a template.
+ * An AI lead sends its approved note as written; drafts that are not approved, or a blank one, fail it: it never falls back to a template.
  */
 export async function runInviteAction(deps: EngineDeps, lead: Lead, settings: Settings): Promise<ActionOutcome> {
   const { db } = deps;

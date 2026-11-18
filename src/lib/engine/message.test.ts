@@ -473,6 +473,13 @@ describe('message action', () => {
       expect((await getLead(e.db, lead.id)).failureReason).toBe('invalid_template');
       expect(sends()).toEqual([]);
     });
+    it.each(['ready', 'pending'] as const)('fails with draft_not_approved and sends nothing when an accepted founder\'s drafts are %s', async (draftStatus) => {
+      const lead = await accepted({ draftStatus });
+      expect((await runMessageAction(e.deps, lead, 'first_message', e.settings)).result).toBe('failed');
+      expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'failed', failureReason: 'draft_not_approved', failedFromStatus: 'accepted', updatedAt: NOW });
+      expect(sends()).toEqual([]);
+      expect((await listEvents(e.db)).filter((x) => x.type === 'message_sent')).toEqual([]);
+    });
     it('sends follow-up 1 from the template', async () => {
       const lead = await accepted({ status: 'messaged', chatId: 'chat_1' });
       await runMessageAction(e.deps, lead, 'followup_1', e.settings);
