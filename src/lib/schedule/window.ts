@@ -29,6 +29,13 @@ export function isInActiveWindow(now: Date, w: ActiveWindow): boolean {
   return t >= at(t, w.start) && t < at(t, w.end);
 }
 
+/** The opening and closing instants of the active window that contains `now`, or null outside the window. */
+export function windowBounds(now: Date, w: ActiveWindow): { start: Date; end: Date } | null {
+  if (!isInActiveWindow(now, w)) return null;
+  const t = local(now, w.timezone);
+  return { start: at(t, w.start).toJSDate(), end: at(t, w.end).toJSDate() };
+}
+
 /** First active day strictly after `day`, at the window opening. */
 function openingAfter(day: DateTime, w: ActiveWindow): DateTime {
   if (w.days.length === 0) throw new Error('Active window has no days');

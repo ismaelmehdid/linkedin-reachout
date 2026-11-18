@@ -20,6 +20,17 @@ export type Settings = {
     profileViewsPerDay: number;
     jitterMaxSeconds: number;
   };
+  /** Spacing between sends (spec §8 "Spacing"), in minutes. With the pauses at 0, spacing is off. */
+  pacing: {
+    /** The shortest average pause between two sends. */
+    minGapMinutes: number;
+    /** The longest average pause between two sends. At 0, there is no pause between sends or between withdrawals. */
+    maxGapMinutes: number;
+    /** The first send of a day waits for a random moment within this time after the window opens. */
+    dayStartJitterMinutes: number;
+    /** A follow-up is due after its delay in days plus a random part of this time. */
+    followupJitterMinutes: number;
+  };
   window: ActiveWindow;
 };
 
@@ -45,6 +56,12 @@ export const DEFAULT_SETTINGS: Settings = {
     messagesPerDay: 90,
     profileViewsPerDay: 90,
     jitterMaxSeconds: 90,
+  },
+  pacing: {
+    minGapMinutes: 4,
+    maxGapMinutes: 45,
+    dayStartJitterMinutes: 45,
+    followupJitterMinutes: 180,
   },
   window: { days: [1, 2, 3, 4, 5], start: '08:30', end: '19:00', timezone: 'Europe/Paris' },
 };
@@ -74,6 +91,12 @@ const settingsSchema = z.object({
     messagesPerDay: count,
     profileViewsPerDay: count,
     jitterMaxSeconds: count,
+  }),
+  pacing: z.object({
+    minGapMinutes: count,
+    maxGapMinutes: count,
+    dayStartJitterMinutes: count,
+    followupJitterMinutes: count,
   }),
   window: z.object({
     days: z.array(z.number().int().min(1).max(7)),
@@ -158,6 +181,14 @@ const CAP_LIMITS: [keyof Settings['caps'], string, number][] = [
   ['profileViewsPerDay', 'Profile views per day', 100],
 ];
 
+/**
+ * The most each spacing value may be set to, in minutes. Spacing only ever delays a send, so these bounds
+ * keep a mistyped value from holding every send back for hours or days.
+ */
+const MAX_GAP_MINUTES = 240;
+const MAX_DAY_START_JITTER_MINUTES = 180;
+const MAX_FOLLOWUP_JITTER_MINUTES = 720;
+
 /** The delays counted in days. With 0, a follow-up would go out on the tick after the previous message. */
 const DAY_DELAYS: [keyof Settings['delays'], string][] = [
   ['followup1Days', 'Follow-up 1 delay'],
@@ -179,6 +210,14 @@ export function validateSettings(s: Settings): string[] {
   }
   if (s.caps.jitterMaxSeconds > MAX_JITTER_SECONDS) {
     errors.push(`Random wait: must be ${MAX_JITTER_SECONDS} seconds or less`);
+  }
+  if (s.pacing.minGapMinutes > s.pacing.maxGapMinutes) errors.push('Pause between sends: minimum must not exceed maximum');
+  if (s.pacing.maxGapMinutes > MAX_GAP_MINUTES) errors.push(`Pause between sends: must be ${MAX_GAP_MINUTES} minutes or less`);
+  if (s.pacing.dayStartJitterMinutes > MAX_DAY_START_JITTER_MINUTES) {
+    errors.push(`First send of the day: must be ${MAX_DAY_START_JITTER_MINUTES} minutes or less`);
+  }
+  if (s.pacing.followupJitterMinutes > MAX_FOLLOWUP_JITTER_MINUTES) {
+    errors.push(`Follow-up time: must be ${MAX_FOLLOWUP_JITTER_MINUTES} minutes or less`);
   }
   // HH:MM strings are zero-padded, so string comparison is chronological.
   if (s.window.start >= s.window.end) errors.push('Active window: start must be before end');

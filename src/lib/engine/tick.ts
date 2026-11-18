@@ -1,15 +1,16 @@
-import { and, eq, inArray, lte, sql } from 'drizzle-orm';
+import { and, eq, inArray, lte, sql, type SQL } from 'drizzle-orm';
 import { leads, type Lead, type LeadStatus } from '@/db/schema';
 import type { Db } from '@/db/types';
-import { isInActiveWindow } from '@/lib/schedule/window';
+import { isInActiveWindow, windowBounds } from '@/lib/schedule/window';
 import { getSettings } from '@/lib/settings/repo';
-import { MAX_JITTER_SECONDS } from '@/lib/settings/settings';
+import { MAX_JITTER_SECONDS, type Settings } from '@/lib/settings/settings';
 import type { EngineDeps } from './deps';
 import type { ActionOutcome } from './failure';
 import { expireOneInvite, finishDueLeads, runAcceptanceChecks, runInvitePollIfDue } from './housekeeping';
 import { runInviteAction } from './invite';
 import { runMessageAction } from './message';
-import { acquireTickLock, getAppState, releaseTickLock, tickLeaseEnd, type AppState } from './state';
+import { dayStartAt, pickGapMs, withdrawalGapMs } from './pacing';
+import { acquireTickLock, getAppState, releaseTickLock, tickLeaseEnd, updateAppState, type AppState } from './state';
 import { MESSAGE_STEP_BY_STATUS, type MessageStep } from './steps';
 import { getUsage, remainingCapacity, type Remaining } from './usage';
 
@@ -51,7 +52,12 @@ const MESSAGE_STATUSES = Object.keys(MESSAGE_STEP_BY_STATUS) as MessageStatus[];
 
 type PickedAction = { kind: 'message'; lead: Lead; step: MessageStep } | { kind: 'invite'; lead: Lead };
 
+/** The opening and closing instants of today's active window. */
+type WindowBounds = { start: Date; end: Date };
+
 const isPausedAfter = (until: Date | null, now: Date) => until !== null && until > now;
+
+const countWhere = (condition: SQL | undefined) => sql<number>`count(*) filter (where ${condition})`.mapWith(Number);
 
 /** One lead in one of `statuses`, not paused and due, picked at random among them (spec §8). */
 async function pickDueLead(db: Db, statuses: LeadStatus[], now: Date): Promise<Lead | undefined> {
@@ -91,13 +97,56 @@ async function rereadPickedLead(db: Db, picked: Lead, pickedAt: Date): Promise<L
 }
 
 /**
- * Runs the picked action after the random wait, checking again what the wait may have changed: the app or
- * the action's type paused, the settings saved, the window closed, or the lead changed.
+ * Withdraws at most one expired invite, once the pause after the previous withdrawal is over, and starts
+ * the next pause after a withdrawal (spec §8 "Spacing").
+ */
+async function expireOneInviteWhenSpaced(deps: EngineDeps, settings: Settings, now: Date): Promise<void> {
+  const { nextWithdrawalAt } = await getAppState(deps.db);
+  if (nextWithdrawalAt !== null && nextWithdrawalAt > now) return;
+  if (!(await expireOneInvite(deps, settings))) return;
+  // The pause runs from the withdrawal itself, which may come after slow acceptance checks.
+  const withdrawnAt = deps.now();
+  await updateAppState(deps.db, { nextWithdrawalAt: new Date(withdrawnAt.getTime() + withdrawalGapMs(settings.pacing, deps.random)) });
+}
+
+/**
+ * The sends still planned for today: the invites that the caps and the due `queued` leads allow, plus the
+ * messages that the cap and the leads due before the window closes allow. Paused leads are not counted.
+ */
+async function countPlannedSends(db: Db, remaining: Remaining, now: Date, windowEnd: Date): Promise<number> {
+  const [due] = await db
+    .select({
+      invites: countWhere(and(eq(leads.status, 'queued'), lte(leads.nextActionAt, now))),
+      messages: countWhere(and(inArray(leads.status, MESSAGE_STATUSES), lte(leads.nextActionAt, windowEnd))),
+    })
+    .from(leads)
+    .where(and(eq(leads.paused, false), inArray(leads.status, ['queued', ...MESSAGE_STATUSES])));
+  return Math.min(remaining.invites, remaining.profileViews, due.invites) + Math.min(remaining.messages, due.messages);
+}
+
+/**
+ * Plans the earliest moment of the next send: a random pause from now, so that the sends still planned
+ * for today are spread over what is left of the window (spec §8 "Spacing").
+ */
+async function planNextSend(deps: EngineDeps, settings: Settings, bounds: WindowBounds): Promise<void> {
+  const { db } = deps;
+  const now = deps.now();
+  const remaining = remainingCapacity(await getUsage(db, now, settings.window.timezone), settings.caps);
+  const planned = await countPlannedSends(db, remaining, now, bounds.end);
+  const gapMs = pickGapMs({ timeLeftMs: bounds.end.getTime() - now.getTime(), planned, pacing: settings.pacing, random: deps.random });
+  await updateAppState(db, { nextOutreachAt: new Date(now.getTime() + gapMs) });
+}
+
+/**
+ * Runs the picked action after the wait, checking again what the wait may have changed: the app or the
+ * action's type paused, the settings saved, the window closed, or the lead changed. Once the action has
+ * run, whatever its outcome, it plans the next send; a check that stops the action leaves the plan as it is.
  */
 async function runAfterWait(
   deps: EngineDeps,
   picked: PickedAction,
   pickedAt: Date,
+  bounds: WindowBounds,
 ): Promise<{ status: 'paused' | 'outside_window' | 'done'; action: ActionOutcome | null }> {
   const { db } = deps;
   const now = deps.now();
@@ -115,6 +164,7 @@ async function runAfterWait(
     picked.kind === 'message'
       ? await runMessageAction(deps, lead, picked.step, settings)
       : await runInviteAction(deps, lead, settings);
+  await planNextSend(deps, settings, bounds);
   return { status: 'done', action };
 }
 
@@ -130,7 +180,7 @@ async function runLockedTick(deps: EngineDeps, now: Date): Promise<TickResult> {
 
   // Housekeeping does not use the action slot, but its profile views count toward the daily cap.
   await runAcceptanceChecks(deps, settings, (await readRemaining()).profileViews);
-  await expireOneInvite(deps, settings);
+  await expireOneInviteWhenSpaced(deps, settings, now);
   await runInvitePollIfDue(deps);
 
   const state = await getAppState(db);
@@ -138,21 +188,44 @@ async function runLockedTick(deps: EngineDeps, now: Date): Promise<TickResult> {
   // Housekeeping ran long: the outreach action waits for the next tick.
   if (deps.now().getTime() - now.getTime() > OUTREACH_START_BUDGET_MS) return { status: 'done', finished, action: null };
 
-  const picked = await pickAction(db, state, await readRemaining(), now);
-  if (picked === null) return { status: 'done', finished, action: null };
+  // The window was open at `now`, as checked above, so the bounds are always found.
+  const bounds = windowBounds(now, settings.window);
+  if (bounds === null) return { status: 'outside_window', finished, action: null };
+
+  // The first send of a day waits for its own random moment: an earlier day's planned moment is not reused.
+  let plannedAt = state.nextOutreachAt;
+  if (plannedAt === null || plannedAt < bounds.start) {
+    plannedAt = dayStartAt(bounds.start, now, settings.pacing, deps.random);
+    await updateAppState(db, { nextOutreachAt: plannedAt });
+  }
 
   // A stored wait above the validated maximum (an old row, or one edited by hand) is not trusted.
   const jitterSeconds = Math.min(settings.caps.jitterMaxSeconds, MAX_JITTER_SECONDS);
-  const randomWaitMs = Math.floor(deps.random() * jitterSeconds * 1000);
-  // What is left of the time in which the action has to start.
-  const waitBudgetMs = ACTION_START_BUDGET_MS - (deps.now().getTime() - now.getTime());
-  await deps.sleep(Math.max(0, Math.min(randomWaitMs, waitBudgetMs)));
-  return { ...(await runAfterWait(deps, picked, now)), finished };
+  // What is left, at `at`, of the time in which the action has to start.
+  const waitBudgetMs = (at: Date) => ACTION_START_BUDGET_MS - (at.getTime() - now.getTime());
+
+  // The longest wait of a tick stays the random-wait maximum, cut by the time budget: a planned moment
+  // further away is left for a later tick, before any lead is picked.
+  const beforePick = deps.now();
+  if (plannedAt.getTime() - beforePick.getTime() > Math.min(jitterSeconds * 1000, waitBudgetMs(beforePick))) {
+    return { status: 'done', finished, action: null };
+  }
+
+  const picked = await pickAction(db, state, await readRemaining(), now);
+  if (picked === null) return { status: 'done', finished, action: null };
+
+  // On time, the tick waits until the planned moment. Late, it waits the random wait.
+  const beforeWait = deps.now();
+  const untilPlannedMs = plannedAt.getTime() - beforeWait.getTime();
+  const waitMs = untilPlannedMs > 0 ? untilPlannedMs : Math.floor(deps.random() * jitterSeconds * 1000);
+  await deps.sleep(Math.max(0, Math.min(waitMs, waitBudgetMs(beforeWait))));
+  return { ...(await runAfterWait(deps, picked, now, bounds)), finished };
 }
 
 /**
  * One engine tick (spec §8, §13): takes the lock, does housekeeping, then performs at most one outreach
- * action inside the caps and the active window. Returns `locked` at once when another tick holds the lock.
+ * action inside the caps and the active window, not before its planned moment. Returns `locked` at once
+ * when another tick holds the lock.
  */
 export async function runTick(deps: EngineDeps): Promise<TickResult> {
   const now = deps.now();

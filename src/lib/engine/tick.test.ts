@@ -232,3 +232,135 @@ describe('tick', () => {
     expect(await acquireTickLock(e.db, NOW, TICK_LEASE_MS)).toBe(true);
   });
 });
+
+describe('tick with spacing on', () => {
+  let e: TestEngine;
+  beforeEach(async () => {
+    e = await createTestEngine({ settings: (s) => ({ ...s, pacing: { minGapMinutes: 4, maxGapMinutes: 45, dayStartJitterMinutes: 45, followupJitterMinutes: 0 } }) });
+  });
+
+  const acceptedDue = () => seedLead(e.db, { status: 'accepted', providerId: 'ACoBob', firstName: 'Bob', sequenceStartedAt: NOW });
+  const methods = () => e.fake.calls.map((c) => c.method);
+  const at = (ms: number) => new Date(NOW.getTime() + ms);
+
+  it('sends nothing before the planned moment', async () => {
+    await updateAppState(e.db, { nextOutreachAt: at(10 * 60_000) }); await acceptedDue();
+    expect((await runTick(e.deps)).action).toBeNull();
+    expect(methods()).toEqual([]); expect(e.sleeps).toEqual([]);
+  });
+  it('waits until the planned second, then sends', async () => {
+    await updateAppState(e.db, { nextOutreachAt: at(40_000) }); await acceptedDue();
+    expect((await runTick(e.deps)).action?.result).toBe('messaged');
+    expect(e.sleeps).toEqual([40_000]);
+  });
+  it('uses the random wait when the planned moment has passed', async () => {
+    await updateAppState(e.db, { nextOutreachAt: at(-60_000) }); await acceptedDue();
+    await runTick(e.deps);
+    expect(e.sleeps).toEqual([45_000]);
+  });
+  it('plans the next send a random pause later, spread over the rest of the day', async () => {
+    await updateAppState(e.db, { nextOutreachAt: NOW }); await acceptedDue();
+    for (let i = 0; i < 36; i++) await seedLead(e.db, { slug: `queued-${i}` });
+    await runTick(e.deps);
+    // 9 hours are left (the window closes at 18:00Z); 35 invites are planned (the daily cap), no other message is due.
+    const expected = Math.round(((9 * 60 * 60_000) / 35) * (0.5 + 0.5));
+    expect((await getAppState(e.db)).nextOutreachAt).toEqual(at(expected));
+  });
+  it('keeps the longest average pause when little is planned', async () => {
+    await updateAppState(e.db, { nextOutreachAt: NOW }); await acceptedDue();
+    await runTick(e.deps);
+    expect((await getAppState(e.db)).nextOutreachAt).toEqual(at(45 * 60_000));
+  });
+  it('starts the day at a random moment and sends nothing before it', async () => {
+    e.setNow(new Date('2026-11-17T07:31:00Z')); await acceptedDue();
+    expect((await runTick(e.deps)).action).toBeNull();
+    expect((await getAppState(e.db)).nextOutreachAt).toEqual(new Date('2026-11-17T07:52:30Z'));
+    expect(methods()).toEqual([]);
+  });
+  it('starts within two minutes when the app is started during the day', async () => {
+    await acceptedDue();
+    expect((await runTick(e.deps)).action?.result).toBe('messaged');
+    expect(e.sleeps).toEqual([60_000]);
+  });
+  it('does not reuse yesterday\'s planned moment', async () => {
+    await updateAppState(e.db, { nextOutreachAt: new Date('2026-11-16T17:50:00Z') }); await acceptedDue();
+    await runTick(e.deps);
+    expect(e.sleeps).toEqual([60_000]);
+  });
+  it('leaves the planned moment alone when a check after the wait stops the send', async () => {
+    await updateAppState(e.db, { nextOutreachAt: at(30_000) }); await acceptedDue();
+    e.deps.sleep = async () => { await setRunning(e.db, false); };
+    await runTick(e.deps);
+    expect((await getAppState(e.db)).nextOutreachAt).toEqual(at(30_000));
+  });
+  it('withdraws one invite, then waits a random 10 to 30 minutes before the next', async () => {
+    // The poll is pushed out of the way, so the only Unipile call in this test is the withdrawal.
+    await updateAppState(e.db, { nextOutreachAt: at(10 * 60_000), nextInvitePollAt: at(6 * 3_600_000) });
+    const a = await seedLead(e.db, { status: 'invite_sent', invitationId: 'inv_a', nextActionAt: at(-2 * 3_600_000) });
+    const b = await seedLead(e.db, { status: 'invite_sent', invitationId: 'inv_b', nextActionAt: at(-3_600_000) });
+    await runTick(e.deps); await runTick(e.deps);
+    expect(methods()).toEqual(['cancelInvitation']);
+    expect((await getAppState(e.db)).nextWithdrawalAt).toEqual(at(20 * 60_000));
+    e.setNow(at(21 * 60_000)); await updateAppState(e.db, { nextOutreachAt: at(60 * 60_000) });
+    await runTick(e.deps);
+    expect([(await getLead(e.db, a.id)).status, (await getLead(e.db, b.id)).status]).toEqual(['invite_expired', 'invite_expired']);
+  });
+
+  // Beyond the brief's list: the time limits and the checks after the wait, with spacing on.
+  it('never waits longer than the random-wait maximum for the planned moment', async () => {
+    // 90 s is the longest wait (the random-wait maximum); a moment 91 s away is left for a later tick.
+    await updateAppState(e.db, { nextOutreachAt: at(91_000) }); await acceptedDue();
+    expect((await runTick(e.deps)).action).toBeNull();
+    expect(e.sleeps).toEqual([]);
+    await updateAppState(e.db, { nextOutreachAt: at(90_000) });
+    expect((await runTick(e.deps)).action?.result).toBe('messaged');
+    expect(e.sleeps).toEqual([90_000]);
+  });
+  it('leaves the planned moment for a later tick when slow housekeeping cut the time to wait for it', async () => {
+    await seedLead(e.db, { status: 'invite_sent', providerId: 'ACoSlow', acceptanceCheckPending: true, inviteSentAt: NOW, nextActionAt: new Date('2026-12-08T09:00:00Z') });
+    e.fake.profiles.set('ACoSlow', makeProfile({ providerId: 'ACoSlow' }));
+    await updateAppState(e.db, { nextOutreachAt: at(111_000), nextInvitePollAt: at(3_600_000) });
+    // Housekeeping takes 25 s, so the action has to start within 85 s more: the planned moment is 86 s away.
+    e.fake.onCall('getProfile', async () => { e.setNow(at(25_000)); });
+    await acceptedDue();
+    expect((await runTick(e.deps)).action).toBeNull();
+    expect(methods()).toEqual(['getProfile']);
+    expect(e.sleeps).toEqual([]);
+  });
+  it('sends nothing when the lead replied while the tick waited for the planned moment', async () => {
+    await updateAppState(e.db, { nextOutreachAt: at(30_000) }); const lead = await acceptedDue();
+    e.deps.sleep = async () => { await e.db.update(leads).set({ status: 'replied' }).where(eq(leads.id, lead.id)); };
+    expect((await runTick(e.deps)).action).toEqual({ leadId: lead.id, result: 'superseded' });
+    expect(methods()).toEqual([]);
+    expect((await getAppState(e.db)).nextOutreachAt).toEqual(at(30_000));
+  });
+  it('sends nothing when the active window closed while the tick waited for the planned moment', async () => {
+    e.setNow(new Date('2026-11-17T17:59:30Z'));
+    await updateAppState(e.db, { nextOutreachAt: new Date('2026-11-17T18:00:10Z') }); await acceptedDue();
+    e.deps.sleep = async (ms) => { e.sleeps.push(ms); e.setNow(new Date('2026-11-17T18:00:10Z')); };
+    expect(await runTick(e.deps)).toMatchObject({ status: 'outside_window', action: null });
+    expect(e.sleeps).toEqual([40_000]);
+    expect(methods()).toEqual([]);
+  });
+  it('plans the next send after an action that failed without sending', async () => {
+    await updateAppState(e.db, { nextOutreachAt: NOW });
+    // No first name: the first message cannot be rendered, and the lead fails before anything is sent.
+    await seedLead(e.db, { status: 'accepted', providerId: 'ACoBob', sequenceStartedAt: NOW });
+    expect((await runTick(e.deps)).action?.result).toBe('failed');
+    expect((await getAppState(e.db)).nextOutreachAt).toEqual(at(45 * 60_000));
+  });
+  it('counts the messages due before the window closes among the planned sends', async () => {
+    await updateAppState(e.db, { nextOutreachAt: NOW }); await acceptedDue();
+    // Due later today, so planned; tomorrow's follow-up is not.
+    for (let i = 0; i < 19; i++) await seedLead(e.db, { status: 'messaged', providerId: `ACoLater${i}`, nextActionAt: at(3_600_000) });
+    await seedLead(e.db, { status: 'messaged', providerId: 'ACoTomorrow', nextActionAt: new Date('2026-11-18T09:00:00Z') });
+    await runTick(e.deps);
+    // 9 hours over 19 planned messages and no invite: about 28.4 minutes on average.
+    expect((await getAppState(e.db)).nextOutreachAt).toEqual(at(Math.round((9 * 60 * 60_000) / 19)));
+  });
+  it('spaces nothing on a day the window is closed', async () => {
+    e.setNow(new Date('2026-11-21T10:00:00Z')); await acceptedDue();
+    expect((await runTick(e.deps)).status).toBe('outside_window');
+    expect((await getAppState(e.db)).nextOutreachAt).toBeNull();
+  });
+});

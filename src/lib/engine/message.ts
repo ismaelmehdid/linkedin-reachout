@@ -80,7 +80,7 @@ export async function runMessageAction(deps: EngineDeps, lead: Lead, step: Messa
     const marked = await updateLeadIfStatus(
       db,
       lead,
-      { status, chatId: inChatId, nextActionAt: nextDueAfterSend(status, sentAt, settings), retryCount: 0, lastAction: step, lastActionAt: sentAt },
+      { status, chatId: inChatId, nextActionAt: nextDueAfterSend(status, sentAt, settings, deps.random), retryCount: 0, lastAction: step, lastActionAt: sentAt },
       now,
     );
     await resetErrorStreak(db);
@@ -148,8 +148,8 @@ export async function runMessageAction(deps: EngineDeps, lead: Lead, step: Messa
       db,
       lead,
       isFirstMessage
-        ? { status: 'messaged', nextActionAt: nextDueAfterSend('messaged', manualAt, settings), lastAction: 'manual_message', lastActionAt: manualAt }
-        : { nextActionAt: nextDueAfterSend(STATUS_BEFORE_FOLLOWUP[step], manualAt, settings), lastAction: 'manual_message', lastActionAt: manualAt },
+        ? { status: 'messaged', nextActionAt: nextDueAfterSend('messaged', manualAt, settings, deps.random), lastAction: 'manual_message', lastActionAt: manualAt }
+        : { nextActionAt: nextDueAfterSend(STATUS_BEFORE_FOLLOWUP[step], manualAt, settings, deps.random), lastAction: 'manual_message', lastActionAt: manualAt },
       now,
     );
     return outcome('superseded');

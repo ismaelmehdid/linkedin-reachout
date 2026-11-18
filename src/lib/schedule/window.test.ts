@@ -5,6 +5,7 @@ import {
   nextActiveDayStart,
   startOfLocalDay,
   addLocalDays,
+  windowBounds,
 } from './window';
 
 const W = { days: [1, 2, 3, 4, 5], start: '08:30', end: '19:00', timezone: 'Europe/Paris' };
@@ -40,4 +41,10 @@ describe('active window', () => {
 
   it('adds calendar days at the same local time across a time change', () =>
     expect(addLocalDays(d('2027-03-27T09:00:00Z'), 2, 'Europe/Paris')).toEqual(d('2027-03-29T08:00:00Z')));
+
+  it('gives the bounds of the window that contains now, and null outside it', () => {
+    expect(windowBounds(d('2026-11-17T09:00:00Z'), W)).toEqual({ start: d('2026-11-17T07:30:00Z'), end: d('2026-11-17T18:00:00Z') });
+    expect(windowBounds(d('2026-11-17T18:00:00Z'), W)).toBeNull();
+    expect(windowBounds(d('2027-03-29T07:00:00Z'), W)).toEqual({ start: d('2027-03-29T06:30:00Z'), end: d('2027-03-29T17:00:00Z') });
+  });
 });

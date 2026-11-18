@@ -108,10 +108,10 @@ async function handleOwnMessage(db: Db, event: MessageEvent, opts: WebhookOption
   let patch: PgUpdateSetSource<typeof leads>;
   if (lead.status === 'accepted' || lead.status === 'already_connected') {
     const settings = await getSettings(db);
-    patch = { status: 'messaged', chatId: event.chatId, nextActionAt: nextDueAfterSend('messaged', msgAt, settings) };
+    patch = { status: 'messaged', chatId: event.chatId, nextActionAt: nextDueAfterSend('messaged', msgAt, settings, opts.random) };
   } else if (lead.status === 'messaged' || lead.status === 'followup_1' || lead.status === 'followup_2') {
     const settings = await getSettings(db);
-    patch = { chatId: chatIdIfNone(event.chatId), nextActionAt: nextDueAfterSend(lead.status, msgAt, settings) };
+    patch = { chatId: chatIdIfNone(event.chatId), nextActionAt: nextDueAfterSend(lead.status, msgAt, settings, opts.random) };
   } else {
     return ignored(lead.id);
   }

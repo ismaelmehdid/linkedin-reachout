@@ -32,8 +32,11 @@ export type TestEngine = {
   sleeps: number[];
 };
 
+/** Spacing off: every send follows the tick, as before spacing existed. A test that needs spacing turns it on. */
+const NO_PACING: Settings['pacing'] = { minGapMinutes: 0, maxGapMinutes: 0, dayStartJitterMinutes: 0, followupJitterMinutes: 0 };
+
 /**
- * A fresh database with saved settings (test templates over the defaults) and the engine running,
+ * A fresh database with saved settings (test templates over the defaults, spacing off) and the engine running,
  * a fake Unipile, a settable clock (NOW by default) and a fixed random value (0.5 by default).
  */
 export async function createTestEngine(
@@ -49,7 +52,7 @@ export async function createTestEngine(
   const fake = createFakeUnipile();
 
   // A deep copy, so a callback that edits it in place cannot change DEFAULT_SETTINGS.
-  const base: Settings = { ...structuredClone(DEFAULT_SETTINGS), templates: { ...TEST_TEMPLATES, ...opts.templates } };
+  const base: Settings = { ...structuredClone(DEFAULT_SETTINGS), templates: { ...TEST_TEMPLATES, ...opts.templates }, pacing: { ...NO_PACING } };
   const saved = await saveSettings(db, opts.settings ? opts.settings(base) : base);
   if (!saved.ok) throw new Error(`Invalid test settings: ${saved.errors.join('; ')}`);
   await setRunning(db, true);

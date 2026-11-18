@@ -29,4 +29,11 @@ describe('steps', () => {
     expect(firstMessageDueAt(NOW, () => 0, DEFAULT_SETTINGS.delays)).toEqual(new Date('2026-11-17T10:00:00Z'));
     expect(firstMessageDueAt(NOW, () => 0.5, DEFAULT_SETTINGS.delays)).toEqual(new Date('2026-11-17T11:00:00Z'));
   });
+
+  it('adds a random part of the follow-up jitter to a follow-up, and none to the end of the sequence', () => {
+    const s = { ...DEFAULT_SETTINGS, pacing: { ...DEFAULT_SETTINGS.pacing, followupJitterMinutes: 180 } };
+    expect(nextDueAfterSend('messaged', NOW, s, () => 0.5)).toEqual(new Date('2026-11-19T10:30:00Z'));
+    expect(nextDueAfterSend('followup_2', NOW, s, () => 0.5)).toEqual(new Date('2026-11-20T09:00:00Z'));
+    expect(nextDueAfterSend('messaged', NOW, s)).toEqual(new Date('2026-11-19T09:00:00Z'));
+  });
 });

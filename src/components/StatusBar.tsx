@@ -19,9 +19,11 @@ type Props = {
   caps: Settings['caps'];
   banners: string[];
   running: boolean;
+  /** When the next invite or message may go out, or null when it may come on the next tick. */
+  nextSend: string | null;
 };
 
-export function StatusBar({ counts, usage, caps, banners, running }: Props) {
+export function StatusBar({ counts, usage, caps, banners, running, nextSend }: Props) {
   const [result, runningAction, pending] = useActionState(running ? pauseAction : startAction, INITIAL_RESULT);
   const usageLine = [
     `Invites today ${usage.invitesToday}/${caps.invitesPerDay}`,
@@ -68,6 +70,7 @@ export function StatusBar({ counts, usage, caps, banners, running }: Props) {
       </ul>
 
       <p className="text-sm text-zinc-600 dark:text-zinc-400">{usageLine}</p>
+      {nextSend && <p className="text-sm text-zinc-600 dark:text-zinc-400">{nextSend}</p>}
     </section>
   );
 }

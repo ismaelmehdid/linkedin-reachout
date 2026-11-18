@@ -20,7 +20,8 @@ describe('processWebhook', () => {
   let db: Db;
   beforeEach(async () => {
     db = await createTestDb();
-    await saveSettings(db, DEFAULT_SETTINGS);
+    // Follow-up jitter off, so the times below are the delays alone; one test saves the real defaults.
+    await saveSettings(db, { ...DEFAULT_SETTINGS, pacing: { ...DEFAULT_SETTINGS.pacing, followupJitterMinutes: 0 } });
   });
 
   const opts = { accountId: 'acc_1', now: NOW, random: () => 0.5 };
@@ -49,6 +50,14 @@ describe('processWebhook', () => {
     const lead = await seedLead(db, { status: 'accepted', providerId: 'ACoJane', lastAction: 'accepted', lastActionAt: new Date('2026-11-17T06:00:00Z') });
     expect((await handle(message(fromMe))).outcome).toBe('manual_message');
     expect(await getLead(db, lead.id)).toMatchObject({ status: 'messaged', nextActionAt: new Date('2026-11-19T08:00:00Z') });
+  });
+
+  it('adds a random part of the follow-up jitter to the timer of a manual message', async () => {
+    await saveSettings(db, DEFAULT_SETTINGS);
+    const lead = await seedLead(db, { status: 'accepted', providerId: 'ACoJane', lastAction: 'accepted', lastActionAt: new Date('2026-11-17T06:00:00Z') });
+    expect((await handle(message(fromMe))).outcome).toBe('manual_message');
+    // 2 days after the message, plus half of the default 180 minutes.
+    expect(await getLead(db, lead.id)).toMatchObject({ status: 'messaged', nextActionAt: new Date('2026-11-19T09:30:00Z') });
   });
 
   it('resets the timer on a manual message after follow-up 1', async () => {

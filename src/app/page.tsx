@@ -7,7 +7,7 @@ import { leadStatus, type Lead, type LeadStatus } from '@/db/schema';
 import { getAppState } from '@/lib/engine/state';
 import { getUsage } from '@/lib/engine/usage';
 import { getEnv } from '@/lib/env';
-import { dashboardBanners, describeNextAction, formatLocal, leadDisplayName, leadRoleLine } from '@/lib/leads/display';
+import { dashboardBanners, describeNextAction, describeNextSend, formatLocal, leadDisplayName, leadRoleLine } from '@/lib/leads/display';
 import { countLeadsByStatus, LEAD_LIST_LIMIT, listLeads, listRecentEvents } from '@/lib/leads/repo';
 import { getSettings } from '@/lib/settings/repo';
 
@@ -61,6 +61,7 @@ export default async function DashboardPage({ searchParams }: PageProps<'/'>) {
         caps={settings.caps}
         banners={dashboardBanners(state, { dryRun: getEnv().dryRun, now, timezone })}
         running={state.running}
+        nextSend={describeNextSend(state, now, timezone)}
       />
       <ImportForm />
       <div className="flex flex-col gap-2">

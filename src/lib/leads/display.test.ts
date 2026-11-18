@@ -4,6 +4,7 @@ import { NOW } from '@/test-utils/engine';
 import {
   dashboardBanners,
   describeNextAction,
+  describeNextSend,
   eventDetail,
   formatImportSummary,
   formatLocal,
@@ -128,5 +129,13 @@ describe('lead display', () => {
     expect(dashboardBanners({ ...idle, invitesPausedUntil: NOW, messagesPausedUntil: new Date('2026-11-17T08:00:00Z') }, opts)).toEqual([
       'Live: actions are sent to LinkedIn',
     ]);
+  });
+
+  it('says when the next send may happen, only while running and in the future', () => {
+    const at = new Date('2026-11-17T13:07:00Z');
+    expect(describeNextSend({ running: true, nextOutreachAt: at }, NOW, 'Europe/Paris')).toBe('Next send not before 2026-11-17 14:07');
+    expect(describeNextSend({ running: false, nextOutreachAt: at }, NOW, 'Europe/Paris')).toBeNull();
+    expect(describeNextSend({ running: true, nextOutreachAt: NOW }, NOW, 'Europe/Paris')).toBeNull();
+    expect(describeNextSend({ running: true, nextOutreachAt: null }, NOW, 'Europe/Paris')).toBeNull();
   });
 });

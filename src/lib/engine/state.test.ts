@@ -30,6 +30,8 @@ describe('app state', () => {
       nextInvitePollAt: null,
       tickLockUntil: null,
       consecutiveErrors: 0,
+      nextOutreachAt: null,
+      nextWithdrawalAt: null,
     }));
 
   const leaseUntil = (start: Date) => new Date(start.getTime() + 240_000);

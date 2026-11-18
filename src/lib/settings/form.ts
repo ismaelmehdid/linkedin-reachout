@@ -12,7 +12,7 @@ function count(form: FormData, name: string): number {
 }
 
 /**
- * Reads the settings form. Every key of `templates`, `delays`, `caps` and `window` is always present, even when
+ * Reads the settings form. Every key of `templates`, `delays`, `caps`, `pacing` and `window` is always present, even when
  * the form leaves a field out: `saveSettings` merges its input over the defaults, so a missing key would be
  * silently reset to its default instead of rejected. The result is checked by `saveSettings`, hence `unknown`.
  */
@@ -38,6 +38,12 @@ export function formDataToSettings(form: FormData): unknown {
       messagesPerDay: count(form, 'messagesPerDay'),
       profileViewsPerDay: count(form, 'profileViewsPerDay'),
       jitterMaxSeconds: count(form, 'jitterMaxSeconds'),
+    },
+    pacing: {
+      minGapMinutes: count(form, 'minGapMinutes'),
+      maxGapMinutes: count(form, 'maxGapMinutes'),
+      dayStartJitterMinutes: count(form, 'dayStartJitterMinutes'),
+      followupJitterMinutes: count(form, 'followupJitterMinutes'),
     },
     window: {
       days: form.getAll('windowDays').map(Number),

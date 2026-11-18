@@ -39,6 +39,33 @@ const CAP_FIELDS: (Field<keyof Settings['caps']> & { max?: number })[] = [
   { key: 'jitterMaxSeconds', label: 'Random wait before each action: up to this many seconds (100 at most)', max: 100 },
 ];
 
+const PACING_FIELDS: (Field<keyof Settings['pacing']> & { max: number; help: string })[] = [
+  {
+    key: 'minGapMinutes',
+    label: 'Pause between sends: shortest average, in minutes (240 at most)',
+    max: 240,
+    help: "The day's sends are spread over the active hours, and the average pause is never shorter than this. 0 turns this lower bound off.",
+  },
+  {
+    key: 'maxGapMinutes',
+    label: 'Pause between sends: longest average, in minutes (240 at most)',
+    max: 240,
+    help: 'The average pause is never longer than this, and each pause is drawn between half and one and a half times the average. 0 turns the pauses off, also between invite withdrawals.',
+  },
+  {
+    key: 'dayStartJitterMinutes',
+    label: 'First send of the day: within this many minutes of the start (180 at most)',
+    max: 180,
+    help: 'The first send of the day waits for a random moment in this time after the active hours open. 0 turns this off.',
+  },
+  {
+    key: 'followupJitterMinutes',
+    label: 'Follow-up time: up to this many extra minutes (720 at most)',
+    max: 720,
+    help: 'A follow-up is due after its delay in days plus a random part of this time, so it does not come at the same hour as the message before. 0 turns this off.',
+  },
+];
+
 /** Index + 1 is the ISO weekday the form sends. */
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -71,7 +98,7 @@ function TemplatePreview({ result }: { result: RenderResult }) {
   );
 }
 
-function NumberField({ name, label, value, max }: { name: string; label: string; value: number; max?: number }) {
+function NumberField({ name, label, value, max, help }: { name: string; label: string; value: number; max?: number; help?: string }) {
   return (
     <label className="flex flex-col gap-1">
       <span className="text-sm">{label}</span>
@@ -85,6 +112,7 @@ function NumberField({ name, label, value, max }: { name: string; label: string;
         required
         className={INPUT_CLASS}
       />
+      {help && <span className="text-sm text-zinc-500">{help}</span>}
     </label>
   );
 }
@@ -175,6 +203,13 @@ export default function SettingsForm({ settings, leads }: { settings: Settings; 
         <h2 className="text-lg font-semibold">Limits</h2>
         {CAP_FIELDS.map(({ key, label, max }) => (
           <NumberField key={key} name={key} label={label} value={settings.caps[key]} max={max} />
+        ))}
+      </section>
+
+      <section className="flex flex-col gap-4">
+        <h2 className="text-lg font-semibold">Spacing</h2>
+        {PACING_FIELDS.map(({ key, label, max, help }) => (
+          <NumberField key={key} name={key} label={label} value={settings.pacing[key]} max={max} help={help} />
         ))}
       </section>
 

@@ -46,14 +46,25 @@ export function statusAfterMessage(step: MessageStep): 'messaged' | 'followup_1'
   return STATUS_AFTER_MESSAGE[step];
 }
 
-/** When the step after a send is due: calendar days in the window's timezone, so the local time of day is kept. */
-export function nextDueAfterSend(status: 'messaged' | 'followup_1' | 'followup_2', sentAt: Date, settings: Settings): Date {
+/**
+ * When the step after a send is due: calendar days in the window's timezone, so the local time of day is
+ * kept. With `random`, a follow-up also gets a random part of `followupJitterMinutes` on top, so it does not
+ * come at the same time of day as the message before it (spec §8 "Spacing"). The end of the sequence does not.
+ */
+export function nextDueAfterSend(
+  status: 'messaged' | 'followup_1' | 'followup_2',
+  sentAt: Date,
+  settings: Settings,
+  random?: () => number,
+): Date {
   const days = {
     messaged: settings.delays.followup1Days,
     followup_1: settings.delays.followup2Days,
     followup_2: settings.delays.finishDays,
   }[status];
-  return addLocalDays(sentAt, days, settings.window.timezone);
+  const due = addLocalDays(sentAt, days, settings.window.timezone);
+  if (random === undefined || status === 'followup_2') return due;
+  return new Date(due.getTime() + Math.floor(random() * settings.pacing.followupJitterMinutes * 60_000));
 }
 
 /** A random point between the minimum and maximum first-message delay after acceptance. */

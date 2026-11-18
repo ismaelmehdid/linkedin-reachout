@@ -12,7 +12,7 @@ const fullForm = (over: Record<string, string> = {}) => {
     firstMessage: s.templates.firstMessage,
     followup1: s.templates.followup1,
     followup2: s.templates.followup2,
-    ...Object.fromEntries(Object.entries({ ...s.delays, ...s.caps }).map(([k, v]) => [k, String(v)])),
+    ...Object.fromEntries(Object.entries({ ...s.delays, ...s.caps, ...s.pacing }).map(([k, v]) => [k, String(v)])),
     windowStart: '08:30',
     windowEnd: '19:00',
     timezone: 'Europe/Paris',
@@ -24,7 +24,7 @@ const fullForm = (over: Record<string, string> = {}) => {
   return fd;
 };
 
-const SECTIONS = ['templates', 'delays', 'caps', 'window'] as const;
+const SECTIONS = ['templates', 'delays', 'caps', 'pacing', 'window'] as const;
 
 const sortedKeys = (value: object) => Object.keys(value).sort();
 
@@ -34,11 +34,20 @@ describe('formDataToSettings', () => {
       templates: { ...DEFAULT_SETTINGS.templates, inviteNote: 'Hi {{first_name}}' },
       delays: DEFAULT_SETTINGS.delays,
       caps: { ...DEFAULT_SETTINGS.caps, invitesPerDay: 20 },
+      pacing: DEFAULT_SETTINGS.pacing,
       window: { days: [1, 3], start: '08:30', end: '19:00', timezone: 'Europe/Paris' },
     }));
 
   it('turns an empty number field into NaN so validation rejects it', () =>
     expect((formDataToSettings(fullForm({ invitesPerDay: '' })) as Settings).caps.invitesPerDay).toBeNaN());
+
+  it('reads the four spacing fields', () =>
+    expect((formDataToSettings(fullForm({ minGapMinutes: '0', maxGapMinutes: '0', dayStartJitterMinutes: '30', followupJitterMinutes: '60' })) as Settings).pacing).toEqual({
+      minGapMinutes: 0,
+      maxGapMinutes: 0,
+      dayStartJitterMinutes: 30,
+      followupJitterMinutes: 60,
+    }));
 
   it('turns a blank number field into NaN as well', () =>
     expect((formDataToSettings(fullForm({ invitesPerDay: '  ' })) as Settings).caps.invitesPerDay).toBeNaN());
@@ -50,7 +59,7 @@ describe('formDataToSettings', () => {
   it.each([
     ['a full form', fullForm()],
     ['an empty form', new FormData()],
-  ])('emits every key of templates, delays, caps and window for %s', (_name, form) => {
+  ])('emits every key of templates, delays, caps, pacing and window for %s', (_name, form) => {
     const settings = formDataToSettings(form) as Settings;
     for (const section of SECTIONS) expect(sortedKeys(settings[section])).toEqual(sortedKeys(DEFAULT_SETTINGS[section]));
   });

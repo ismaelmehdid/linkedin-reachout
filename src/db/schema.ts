@@ -116,6 +116,10 @@ export const appStateTable = pgTable('app_state', {
   nextInvitePollAt: timestamptz('next_invite_poll_at'),
   tickLockUntil: timestamptz('tick_lock_until'),
   consecutiveErrors: integer('consecutive_errors').notNull().default(0),
+  /** The earliest moment of the next invite or message (spec §8 "Spacing"). Null until the first tick plans one. */
+  nextOutreachAt: timestamptz('next_outreach_at'),
+  /** The earliest moment of the next invite withdrawal. Null until the first withdrawal. */
+  nextWithdrawalAt: timestamptz('next_withdrawal_at'),
 });
 
 export type Lead = typeof leads.$inferSelect;

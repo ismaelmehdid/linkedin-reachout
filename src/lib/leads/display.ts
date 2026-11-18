@@ -84,6 +84,15 @@ export function eventDetail(event: Pick<EventRow, 'type' | 'payload'>): string |
 }
 
 /**
+ * The earliest moment of the next invite or message, while the app runs and that moment is still ahead
+ * (spec §8 "Spacing"). Null otherwise: a send may then come on the next tick.
+ */
+export function describeNextSend(state: Pick<AppState, 'running' | 'nextOutreachAt'>, now: Date, timezone: string): string | null {
+  if (!state.running || state.nextOutreachAt === null || state.nextOutreachAt <= now) return null;
+  return `Next send not before ${formatLocal(state.nextOutreachAt, timezone)}`;
+}
+
+/**
  * The dashboard's banners. The first always says whether sends are real, so a missing banner is never
  * the only sign of live sending. A pause shows only while its end is after `now`, as the tick counts it.
  */

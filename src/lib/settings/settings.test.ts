@@ -80,6 +80,27 @@ describe('validateSettings', () => {
   });
   it('still accepts a first message with no delay', () =>
     expect(validateSettings(withDelays({ firstMessageMinMinutes: 0, firstMessageMaxMinutes: 0 }))).toEqual([]));
+
+  it('ships spacing defaults and validates them', () => {
+    expect(DEFAULT_SETTINGS.pacing).toEqual({ minGapMinutes: 4, maxGapMinutes: 45, dayStartJitterMinutes: 45, followupJitterMinutes: 180 });
+    const withPacing = (p: Partial<Settings['pacing']>) => ({ ...DEFAULT_SETTINGS, pacing: { ...DEFAULT_SETTINGS.pacing, ...p } });
+    expect(validateSettings(withPacing({ minGapMinutes: 50 }))).toContain('Pause between sends: minimum must not exceed maximum');
+    expect(validateSettings(withPacing({ maxGapMinutes: 241 }))).toContain('Pause between sends: must be 240 minutes or less');
+    expect(validateSettings(withPacing({ dayStartJitterMinutes: 181 }))).toContain('First send of the day: must be 180 minutes or less');
+    expect(validateSettings(withPacing({ followupJitterMinutes: 721 }))).toContain('Follow-up time: must be 720 minutes or less');
+  });
+  it('fills spacing defaults into stored settings that have none', () =>
+    expect(parseSettings({ caps: { invitesPerDay: 10 } }).pacing).toEqual(DEFAULT_SETTINGS.pacing));
+  // Beyond the brief's list: the bounds themselves, and spacing turned off.
+  it('accepts spacing at its bounds, and all four values at 0', () => {
+    const withPacing = (p: Partial<Settings['pacing']>) => ({ ...DEFAULT_SETTINGS, pacing: { ...DEFAULT_SETTINGS.pacing, ...p } });
+    expect(validateSettings(withPacing({ minGapMinutes: 240, maxGapMinutes: 240, dayStartJitterMinutes: 180, followupJitterMinutes: 720 }))).toEqual([]);
+    expect(validateSettings(withPacing({ minGapMinutes: 0, maxGapMinutes: 0, dayStartJitterMinutes: 0, followupJitterMinutes: 0 }))).toEqual([]);
+  });
+  it('throws on a spacing value that is not a whole number of 0 or more', () => {
+    expect(() => parseSettings({ pacing: { maxGapMinutes: -1 } })).toThrow();
+    expect(() => parseSettings({ pacing: { minGapMinutes: 2.5 } })).toThrow();
+  });
 });
 
 describe('startBlockers', () => {
