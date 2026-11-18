@@ -78,6 +78,24 @@ Read this list once. Anything here can be changed.
 46. **The event log shows the reason of each failed action and the outcome of each webhook.** If wrong: nothing.
 47. **The guide schedules cron-job.org inside the active hours only.** A tick every 5 minutes around the clock keeps the Neon database awake and uses up the free tier around day 17. If wrong: budget for Neon's paid plan.
 
+## Random spacing between sends (added after v1, branch `feat/random-pacing`)
+
+The owner asked for random timestamps and spacing, so that sends do not follow a clock. Spec §8 "Spacing" describes the result. These points were decided without asking:
+
+48. **The pause after a send adapts to the day.** Its average is the time left in the active hours divided by the sends still planned today, kept between 4 and 45 minutes; each pause is drawn between 50% and 150% of that. A fixed range would either fire a light day's sends in the first minutes or fail to fit a full day. If wrong: change the two numbers in Settings, or set them to 0 to turn spacing off.
+49. **Each send is planned to the second, and the guide now asks for a tick every minute.** With a tick every 5 minutes every send would land within about 100 seconds after a 5-minute mark, which is a pattern of its own. If wrong: keep 5 minutes; sends are then up to about 3.5 minutes late.
+50. **A tick waits for a planned moment that is up to 90 seconds away, whatever the random-wait setting is.** Otherwise lowering that setting would put every send on a tick boundary. If wrong: nothing; the wait stays inside the limits the tick was sized for.
+51. **The first send of each day waits for a random moment in the first 45 minutes of the active hours**, and that value must be shorter than the active hours. If wrong: set it to 0.
+52. **A follow-up is due after its days plus a random 0 to 3 hours**, also when the timer was restarted by a hand-written message. If wrong: set it to 0.
+53. **After an invite withdrawal the next one waits a random 10 to 30 minutes.** With a tick every minute, withdrawals would otherwise run one per minute. If wrong: nothing; withdrawals are only delayed.
+54. **A planned moment is trusted only as far ahead as the current settings could have planned it**, so shortening the pauses or turning spacing off applies on the next tick. If wrong: nothing.
+55. **The next send is planned after every attempt, including a failed one.** If wrong: nothing; it only delays.
+56. **Not built: varying the number of invites per day.** Sending exactly the daily cap every day is a regularity too, but varying it would lower the volume the owner asked to maximise. It is the owner's call.
+
+Spacing lowers how regular the account looks. It does not make automation invisible, and it does not replace low volumes.
+
+Two Minor points from the review of this task were left open: with a day-start value of 1 minute and pauses of 1 minute or less, a first send in the middle of the day can come a little earlier than planned; and when planning the next send fails right after an action error, nothing is logged.
+
 ## Left open, for the owner
 
 The final reviewer approved the branch for merge and listed these Minor points. None was fixed; there was one fix wave by design.
