@@ -96,6 +96,15 @@ Spacing lowers how regular the account looks. It does not make automation invisi
 
 Two Minor points from the review of this task were left open: with a day-start value of 1 minute and pauses of 1 minute or less, a first send in the middle of the day can come a little earlier than planned; and when planning the next send fails right after an action error, nothing is logged.
 
+## Login on a misconfigured server (added after the first deployment, branch `fix/login-misconfigured-message`)
+
+The first deployment had three of the eight variables. The login form then answered with Next's error page ("This page couldn't load"), which names nothing. The owner asked for a readable message there. These points were decided without asking:
+
+57. **A login on a misconfigured server answers with a message instead of failing.** The message points to the function log and names no variable; the log names it, as on the tick and webhook routes (ruling 42). No session is opened. If wrong: nothing.
+58. **The message appears when the form is sent, not when the page opens.** The login page stays a static page. If wrong: the owner types a password once before reading the message.
+59. **Nothing else changed: the request filter and the dashboard still let the error through.** A browser that already holds a session sees Next's error page while a variable other than `APP_PASSWORD` is wrong. A wrong `APP_PASSWORD` ends its session, and the login page then shows the message. A change to the request filter could not be tested on a real deployment here, and a mistake in it locks the owner out. If wrong: the owner reads "This page couldn't load" again in that case; the guide now says what it means.
+60. **The guide now quotes the Neon URL in the migration command, and says what the dashboard error page means right after a login.** Both came up while diagnosing the first deployment: a Neon URL can contain `&`, where the shell cuts an unquoted command, and a dashboard that cannot read the database shows the same error page. If wrong: nothing.
+
 ## Left open, for the owner
 
 The final reviewer approved the branch for merge and listed these Minor points. None was fixed; there was one fix wave by design.
@@ -109,6 +118,7 @@ The final reviewer approved the branch for merge and listed these Minor points. 
 - **A LinkedIn limit that is about one person** would pause invites each time that lead is picked. Not seen; watch for it.
 - **The poll reads the whole sent list.** Unipile advises reading the first page only.
 - **No logout, and no session revocation** other than changing the password.
+- **The dashboard error page explains nothing.** It shows "This page couldn't load" to a logged-in browser while a variable other than `APP_PASSWORD` is wrong (ruling 59), and after login when the app cannot read the database. A page of our own could point to the function log.
 - **Cosmetic**: the Live banner looks like a pause banner; a finished lead that was paused still shows Resume; a retried lead shows `failed` as its last action until its next action.
 
 ## Not decided here, because only the owner can

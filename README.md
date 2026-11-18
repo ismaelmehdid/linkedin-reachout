@@ -57,7 +57,9 @@ The deploy succeeds even with weak secrets, but every request then fails until e
 openssl rand -base64 32
 ```
 
-If a variable is missing or too short, or `DRY_RUN` is anything but `true` or `false`, `/api/tick` and `/api/webhooks/unipile` answer `500 {"error":"misconfigured"}`. The function log names the variable. A typo in `DRY_RUN` therefore stops the app; it never switches it to live sending. Spaces and line breaks around a value are ignored.
+If a variable is missing or too short, or `DRY_RUN` is anything but `true` or `false`, `/api/tick` and `/api/webhooks/unipile` answer `500 {"error":"misconfigured"}`, and the login page answers every password with `The server is not configured correctly`. The function log names the variable. A typo in `DRY_RUN` therefore stops the app; it never switches it to live sending. Spaces and line breaks around a value are ignored.
+
+A browser that is already logged in does not get that message. While a variable other than `APP_PASSWORD` is wrong, its dashboard shows the error page "This page couldn't load". The function log names the variable there too. A wrong `APP_PASSWORD` ends every session instead: that browser is sent to the login page and gets the message there.
 
 Changing `APP_PASSWORD` logs out every session.
 
@@ -74,13 +76,15 @@ Do these steps in order.
    2. Add Neon from the Vercel Marketplace. It sets `DATABASE_URL`.
    3. Set the other variables from the table above. Set `DRY_RUN=true`.
    4. Deploy.
-3. **Migrations.** Production migrations are not automatic. Run them by hand against the Neon database, with the Neon URL in place of the placeholder. The value is the `DATABASE_URL` that the Neon integration added. Read it in Vercel under Settings → Environment Variables. It is also shown in the Neon console:
+3. **Migrations.** Production migrations are not automatic. Run them by hand against the Neon database, with the Neon URL in place of the placeholder. Keep the single quotes: the URL can contain `&`, and without quotes the shell cuts the command there. The value is the `DATABASE_URL` that the Neon integration added. Read it in Vercel under Settings → Environment Variables. It is also shown in the Neon console:
 
    ```bash
-   DATABASE_URL=<neon url> npm run db:migrate
+   DATABASE_URL='<neon url>' npm run db:migrate
    ```
 
    Run this again after any release that adds a migration.
+
+   If the dashboard shows the error page "This page couldn't load" right after a successful login, the app cannot read the database. Check `DATABASE_URL`, and check that this step ran.
 4. **Unipile webhooks.** In the Unipile dashboard, go to Webhooks and create two webhooks:
    - One Messaging webhook, event `message_received`.
    - One Users webhook, event `new_relation`.

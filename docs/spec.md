@@ -43,6 +43,7 @@ The LinkedIn account is connected manually in the Unipile dashboard. There is no
 - Next.js middleware requires a signed session cookie on every page and API route, except `/api/tick`, `/api/webhooks/unipile` and the login route.
 - Login compares the submitted password with `APP_PASSWORD` (constant-time) and sets the signed cookie.
 - The app refuses to run with weak secrets: every request fails while `APP_PASSWORD` is under 16 characters, or `CRON_SECRET` or `WEBHOOK_SECRET` is under 32. The app is public, and the only brake on password guessing is a 1 s wait per wrong attempt.
+- While the configuration is invalid (a variable is missing or too short, or `DRY_RUN` is not `true` or `false`), login opens no session and answers with a message that points to the function log. The message names no variable; the log does.
 - `/api/tick` rejects requests without the header `Authorization: Bearer <CRON_SECRET>`.
 - `/api/webhooks/unipile` rejects requests without `Unipile-Auth: <WEBHOOK_SECRET>`. Unipile v1 webhooks are not signed, so this header is the only check.
 
