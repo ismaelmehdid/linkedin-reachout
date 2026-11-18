@@ -212,9 +212,16 @@ export function parseScraperFiles(files: { name: string; text: string }[]): Scra
     }
   }
 
-  // companies.json wins for every company it holds; the first file to hold a company wins among them.
+  // companies.json wins for every company it holds. The same company given twice (the same file uploaded
+  // twice) is kept once; two different companies with the same name keep the first, and say so.
   const companies = new Map<string, Company>();
-  for (const company of jsonCompanies) if (!companies.has(company.name)) companies.set(company.name, company);
+  for (const company of jsonCompanies) {
+    const kept = companies.get(company.name);
+    if (!kept) companies.set(company.name, company);
+    else if (JSON.stringify(kept) !== JSON.stringify(company)) {
+      errors.push(`companies.json holds two different companies named "${company.name}": only the first one's founders are kept`);
+    }
+  }
 
   let usedCsvFounders = false;
   const csvCompanies = new Map<string, Company>();

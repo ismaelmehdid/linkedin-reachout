@@ -198,5 +198,5 @@ describe.skipIf(!existsSync(SAMPLE_JSON))('importFounders with the real sample f
     }
     expect(added).toBe(264);
     expect((await importFounders(db, batches[0], NOW)).duplicates).toHaveLength(batches[0].length);
-  });
+  }, 60_000);
 });

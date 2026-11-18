@@ -38,6 +38,17 @@ export function UploadForm() {
         await Promise.all(files.map(async (file) => ({ name: file.name, text: await file.text() }))),
       );
       setErrors(parsed.errors);
+      // A founder imported without part of its data (no jobs, say) never gets it later: the next upload
+      // skips it as already imported. So the owner decides before anything is sent.
+      if (
+        parsed.errors.length > 0 &&
+        parsed.records.length > 0 &&
+        !window.confirm(
+          `${parsed.errors.join('\n')}\n\nFounders imported now keep only this data; uploading again later skips them. Import ${parsed.records.length} founders anyway?`,
+        )
+      ) {
+        return;
+      }
 
       let current: UploadTotals = {
         ...EMPTY_UPLOAD_TOTALS,

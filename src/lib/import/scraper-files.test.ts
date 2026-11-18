@@ -268,6 +268,23 @@ describe('parseScraperFiles', () => {
     expect(parseScraperFiles([companiesFile({ acme: company })]).records).toEqual([JANE]);
   });
 
+  it('names a company that companies.json holds twice with different data, and keeps the first', () => {
+    const second = jsonCompany({
+      slug: 'acme-2',
+      founders: [{ name: 'John Roe', linkedin: 'https://linkedin.com/in/john-roe', bio: '', past_companies: '' }],
+    });
+    const result = parseScraperFiles([companiesFile({ acme: jsonCompany(), 'acme-2': second })]);
+    expect(result.records).toEqual([JANE]);
+    expect(result.errors).toEqual([
+      'companies.json holds two different companies named "Acme": only the first one\'s founders are kept',
+    ]);
+  });
+
+  it('keeps a company given twice with the same data once, without an error', () => {
+    const file = companiesFile({ acme: jsonCompany() });
+    expect(parseScraperFiles([file, file])).toEqual({ records: [JANE], skippedNoLinkedIn: 0, errors: [] });
+  });
+
   it('names a file it does not recognise', () => {
     const result = parseScraperFiles([
       { name: 'notes.txt', text: 'hello' },
