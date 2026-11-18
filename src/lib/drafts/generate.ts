@@ -1,6 +1,6 @@
 import type { LeadContext } from '@/db/schema';
 import type { Db } from '@/db/types';
-import { DraftWriterError, type DraftTexts, type DraftWriter } from '@/lib/openai/client';
+import { DraftWriterError, OPENAI_TIMEOUT_MS, type DraftTexts, type DraftWriter } from '@/lib/openai/client';
 import { INVITE_NOTE_MAX_LENGTH } from '@/lib/templates/render';
 import { buildDraftPrompt } from './prompt';
 import { claimNextDraft, failDraft, saveGeneratedDraft } from './repo';
@@ -17,14 +17,32 @@ function judge(texts: DraftTexts): 'ok' | 'too_long' | 'invalid' {
   return tooLong && checkDraftTexts({ ...texts, inviteNote: 'x' }).length === 0 ? 'too_long' : 'invalid';
 }
 
+/**
+ * Both OpenAI calls of one generation (the first and the length retry) end by this long after it starts,
+ * under the dashboard page's 120 s `maxDuration`.
+ */
+export const GENERATION_DEADLINE_MS = 110_000;
+
+/** A retry with less time left than this would only time out, so the lead fails on the first note instead. */
+export const MIN_RETRY_MS = 15_000;
+
 /** Drafts that pass the checks, with one retry for a note over the limit. Throws a `DraftWriterError` with a short code. */
-async function writeDrafts(writer: DraftWriter, aboutMe: string, context: LeadContext): Promise<DraftTexts> {
+async function writeDrafts(
+  writer: DraftWriter,
+  aboutMe: string,
+  context: LeadContext,
+  timeLeft: () => number,
+): Promise<DraftTexts> {
   const write = async (previousNoteLength?: number) =>
-    trimmed(await writer.write(buildDraftPrompt(aboutMe, context, { previousNoteLength })));
+    trimmed(
+      await writer.write(buildDraftPrompt(aboutMe, context, { previousNoteLength }), {
+        timeoutMs: Math.min(OPENAI_TIMEOUT_MS, timeLeft()),
+      }),
+    );
 
   let texts = await write();
   let verdict = judge(texts);
-  if (verdict === 'too_long') {
+  if (verdict === 'too_long' && timeLeft() >= MIN_RETRY_MS) {
     texts = await write(texts.inviteNote.length);
     verdict = judge(texts);
   }
@@ -44,6 +62,7 @@ export async function generateOneDraft(opts: {
   now: () => Date;
 }): Promise<GenerateResult> {
   const { db, writer, aboutMe, now } = opts;
+  const deadline = now().getTime() + GENERATION_DEADLINE_MS;
   const lead = await claimNextDraft(db, now());
   if (lead === null) return { status: 'none_left' };
 
@@ -56,7 +75,7 @@ export async function generateOneDraft(opts: {
 
   let texts: DraftTexts;
   try {
-    texts = await writeDrafts(writer, aboutMe, lead.context);
+    texts = await writeDrafts(writer, aboutMe, lead.context, () => deadline - now().getTime());
   } catch (err) {
     // Any other error could carry anything, so only its existence is stored.
     return fail(err instanceof DraftWriterError ? err.code : 'unexpected_error');

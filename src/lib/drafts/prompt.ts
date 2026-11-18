@@ -5,7 +5,7 @@ import type { DraftPrompt } from '@/lib/openai/client';
 export const INVITE_NOTE_TARGET_LENGTH = 280;
 
 // The writing rules. The owner's own words and the founder's data go in the user message only.
-const DEVELOPER_MESSAGE = `You write two LinkedIn messages from the sender described under "About me" to the founder described below it. The sender wants to help scale an early-stage startup, and the goal of every conversation is a coffee at the founder's office.
+const DEVELOPER_MESSAGE = `You write two LinkedIn messages from the sender described under "About me" to the founder described below it. The goal of every conversation is a coffee at the founder's office. Everything about the sender comes from "About me" only.
 
 1. inviteNote: the note sent with the connection request.
 - At most ${INVITE_NOTE_TARGET_LENGTH} characters, spaces included. Count them.

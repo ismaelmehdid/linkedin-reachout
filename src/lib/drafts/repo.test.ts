@@ -117,15 +117,21 @@ describe('draft repository', () => {
   });
 
   describe('approving', () => {
-    it('approves a ready draft, and nothing else', async () => {
+    it('approves a ready draft whose note is the one the owner saw, and nothing else', async () => {
       const ready = await seedLead(db, { draftStatus: 'ready', ...drafted, updatedAt: OLD });
-      expect(await approveDraft(db, ready.id, NOW)).toBe(true);
+      expect(await approveDraft(db, ready.id, drafted.inviteNoteDraft, NOW)).toBe(true);
       expect(await getLead(db, ready.id)).toMatchObject({ draftStatus: 'approved', ...drafted, updatedAt: NOW });
       for (const draftStatus of ['none', 'pending', 'failed'] as const) {
-        const lead = await seedLead(db, { draftStatus, updatedAt: OLD });
-        expect(await approveDraft(db, lead.id, NOW)).toBe(false);
+        const lead = await seedLead(db, { draftStatus, ...drafted, updatedAt: OLD });
+        expect(await approveDraft(db, lead.id, drafted.inviteNoteDraft, NOW)).toBe(false);
         expect(await getLead(db, lead.id)).toMatchObject({ draftStatus, updatedAt: OLD });
       }
+    });
+
+    it('refuses to approve a draft rewritten since the owner read it', async () => {
+      const lead = await seedLead(db, { draftStatus: 'ready', ...drafted, updatedAt: OLD });
+      expect(await approveDraft(db, lead.id, 'the note before a regeneration', NOW)).toBe(false);
+      expect(await getLead(db, lead.id)).toMatchObject({ draftStatus: 'ready', updatedAt: OLD });
     });
 
     it('approves every ready draft of a queued lead and counts them', async () => {

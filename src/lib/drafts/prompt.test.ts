@@ -36,7 +36,8 @@ describe('buildDraftPrompt', () => {
     expect(developer).toMatch(/coffee/i);
     expect(developer).toMatch(/500.*900 characters/);
     expect(developer).toMatch(/office/i);
-    expect(developer).toMatch(/thank/i);
+    expect(developer).toMatch(/never thank them for connecting/i);
+    expect(developer).toMatch(/never mention the invite/i);
     expect(developer).toMatch(/English/);
     expect(developer).toMatch(/emoji/i);
     expect(developer).toMatch(/hashtag/i);
@@ -48,6 +49,8 @@ describe('buildDraftPrompt', () => {
     // The owner's own words and the founder's data belong in the user message only.
     expect(developer).not.toContain('Folsom');
     expect(developer).not.toContain('Acme');
+    // Every fact about the owner comes from About me: the rules state none.
+    expect(developer).not.toMatch(/scale|early-stage|startup/i);
   });
 
   it('puts the owner text and every context field in labelled sections of the user message', () => {

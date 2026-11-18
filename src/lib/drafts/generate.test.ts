@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { leads, type LeadContext } from '@/db/schema';
 import type { Db } from '@/db/types';
-import { DraftWriterError, type DraftPrompt, type DraftTexts, type DraftWriter } from '@/lib/openai/client';
+import { DraftWriterError, OPENAI_TIMEOUT_MS, type DraftPrompt, type DraftTexts, type DraftWriter } from '@/lib/openai/client';
 import { createTestDb } from '@/test-utils/db';
 import { NOW, getLead, seedLead } from '@/test-utils/engine';
-import { generateOneDraft } from './generate';
+import { GENERATION_DEADLINE_MS, generateOneDraft } from './generate';
 
 const ABOUT_ME = 'Moved from Paris to San Francisco.';
 
@@ -67,6 +67,42 @@ describe('generateOneDraft', () => {
     expect(writer.prompts[0].user).not.toMatch(/320 characters/);
     expect(writer.prompts[1].user).toMatch(/320 characters/);
     expect((await getLead(db, lead.id)).inviteNoteDraft).toBe(good.inviteNote);
+  });
+
+  it('gives the first call and the retry one shared deadline', async () => {
+    const lead = await seedLead(db, { draftStatus: 'pending', context });
+    let clock = NOW.getTime();
+    const timeouts: Array<number | undefined> = [];
+    const answers = [{ ...good, inviteNote: 'a'.repeat(320) }, good];
+    const writer: DraftWriter = {
+      async write(_prompt, options) {
+        timeouts.push(options?.timeoutMs);
+        clock += 60_000;
+        return answers.shift()!;
+      },
+    };
+    const result = await generateOneDraft({ db, writer, aboutMe: ABOUT_ME, now: () => new Date(clock) });
+    expect(result).toEqual({ status: 'ready', leadId: lead.id });
+    expect(timeouts).toEqual([OPENAI_TIMEOUT_MS, GENERATION_DEADLINE_MS - 60_000]);
+  });
+
+  it('skips the retry and fails note_too_long when too little time is left', async () => {
+    const lead = await seedLead(db, { draftStatus: 'pending', context });
+    let clock = NOW.getTime();
+    let calls = 0;
+    const writer: DraftWriter = {
+      async write() {
+        calls += 1;
+        clock += GENERATION_DEADLINE_MS - 14_000;
+        return { ...good, inviteNote: 'a'.repeat(320) };
+      },
+    };
+    expect(await generateOneDraft({ db, writer, aboutMe: ABOUT_ME, now: () => new Date(clock) })).toEqual({
+      status: 'failed',
+      leadId: lead.id,
+      error: 'note_too_long: 320/300',
+    });
+    expect(calls).toBe(1);
   });
 
   it('fails the lead with note_too_long when the retry is still too long', async () => {

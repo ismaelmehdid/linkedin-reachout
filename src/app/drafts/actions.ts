@@ -69,12 +69,17 @@ export async function getDraftCountsAction(): Promise<DraftCounts> {
   return countDrafts(await getDb());
 }
 
-/** Does nothing when the draft is no longer ready; the refreshed table shows where it stands. */
-export async function approveDraftAction(id: number): Promise<void> {
+/**
+ * `seenInviteNote` is the note the owner read. `ok: false` when the draft is no longer ready or was
+ * rewritten since: the refreshed table shows the current draft, to review again.
+ */
+export async function approveDraftAction(id: number, seenInviteNote: string): Promise<{ ok: boolean }> {
   await requireSession();
   const leadId = checkLeadId(id);
-  await approveDraft(await getDb(), leadId, new Date());
+  if (typeof seenInviteNote !== 'string') throw new Error('Invalid invite note');
+  const ok = await approveDraft(await getDb(), leadId, seenInviteNote, new Date());
   revalidatePath('/');
+  return { ok };
 }
 
 /** Returns how many drafts were approved. */

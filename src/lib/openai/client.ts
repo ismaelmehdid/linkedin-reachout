@@ -12,7 +12,10 @@ export type DraftPrompt = { developer: string; user: string };
 
 export type DraftTexts = { inviteNote: string; firstMessage: string };
 
-export type DraftWriter = { write(prompt: DraftPrompt): Promise<DraftTexts> };
+/** `timeoutMs` overrides the writer's own timeout for this call, so a caller can keep several calls under one deadline. */
+export type DraftWriteOptions = { timeoutMs?: number };
+
+export type DraftWriter = { write(prompt: DraftPrompt, options?: DraftWriteOptions): Promise<DraftTexts> };
 
 /**
  * `code` is short and stored on the lead as its draft error: `rate_limited`, `timeout`, `network_error`,
@@ -91,7 +94,7 @@ export function createDraftWriter(opts: { apiKey: string; model: string; fetch?:
   const timeoutMs = opts.timeoutMs ?? OPENAI_TIMEOUT_MS;
 
   return {
-    async write(prompt) {
+    async write(prompt, options) {
       const body = {
         model: opts.model,
         input: [
@@ -110,7 +113,7 @@ export function createDraftWriter(opts: { apiKey: string; model: string; fetch?:
           method: 'POST',
           headers: { authorization: `Bearer ${opts.apiKey}`, 'content-type': 'application/json', accept: 'application/json' },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(timeoutMs),
+          signal: AbortSignal.timeout(options?.timeoutMs ?? timeoutMs),
         });
       } catch (err) {
         if (isTimeout(err)) throw new DraftWriterError('timeout', 'OpenAI did not answer in time');

@@ -83,6 +83,22 @@ describe('createDraftWriter', () => {
     expect(body).not.toHaveProperty('temperature');
   });
 
+  it('times out after the per-call timeout when one is given', async () => {
+    let signal: AbortSignal | null | undefined;
+    const slow = createDraftWriter({
+      apiKey: API_KEY,
+      model: 'm',
+      fetch: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        signal = init?.signal;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        signal?.throwIfAborted();
+        return json(200, answer(JSON.stringify(drafts)));
+      }) as typeof fetch,
+    });
+    expect(await codeOf(slow.write(PROMPT, { timeoutMs: 20 }))).toBe('timeout');
+    expect(signal?.aborted).toBe(true);
+  });
+
   it('reads the output text across several content parts', async () => {
     const text = JSON.stringify(drafts);
     respond = async () =>

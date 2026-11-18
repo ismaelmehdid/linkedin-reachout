@@ -112,7 +112,9 @@ describe('draft actions', () => {
     const a = await seedLead(db, { draftStatus: 'ready', inviteNoteDraft: 'n', firstMessageDraft: 'm' });
     const b = await seedLead(db, { draftStatus: 'ready', inviteNoteDraft: 'n', firstMessageDraft: 'm' });
     const c = await seedLead(db, { draftStatus: 'failed', draftError: 'timeout' });
-    await approveDraftAction(a.id);
+    expect(await approveDraftAction(b.id, 'an older note')).toEqual({ ok: false });
+    expect((await getLead(db, b.id)).draftStatus).toBe('ready');
+    expect(await approveDraftAction(a.id, 'n')).toEqual({ ok: true });
     expect((await getLead(db, a.id)).draftStatus).toBe('approved');
     expect(await approveAllReadyDraftsAction()).toBe(1);
     expect((await getLead(db, b.id)).draftStatus).toBe('approved');
@@ -120,12 +122,19 @@ describe('draft actions', () => {
     expect((await getLead(db, c.id)).draftStatus).toBe('pending');
     await regenerateDraftAction(a.id);
     expect(await getLead(db, a.id)).toMatchObject({ draftStatus: 'pending', inviteNoteDraft: null });
-    expect(revalidated.length).toBe(4);
+    expect(revalidated.length).toBe(5);
+  });
+
+  it('refuses a seen note that is not a string', async () => {
+    const lead = await seedLead(db, { draftStatus: 'ready', inviteNoteDraft: 'n', firstMessageDraft: 'm' });
+    for (const seen of [null, undefined, 1, {}]) {
+      await expect(approveDraftAction(lead.id, seen as unknown as string)).rejects.toThrow('Invalid invite note');
+    }
   });
 
   it('refuses a lead id that is not a positive integer', async () => {
     for (const id of [0, -1, 1.5, '1', null]) {
-      await expect(approveDraftAction(id as number)).rejects.toThrow('Invalid lead id');
+      await expect(approveDraftAction(id as number, 'n')).rejects.toThrow('Invalid lead id');
       await expect(regenerateDraftAction(id as number)).rejects.toThrow('Invalid lead id');
       await expect(saveDraftAction(id as number, drafts)).rejects.toThrow('Invalid lead id');
     }

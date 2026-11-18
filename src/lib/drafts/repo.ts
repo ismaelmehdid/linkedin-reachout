@@ -88,11 +88,15 @@ export async function failDraft(db: Db, id: number, reason: string, now: Date): 
   return failed.length > 0;
 }
 
-export async function approveDraft(db: Db, id: number, now: Date): Promise<boolean> {
+/**
+ * Approves a ready draft only while its note is still the one the owner read: a draft regenerated in
+ * between is new text that needs a new reading. False when it was not approved.
+ */
+export async function approveDraft(db: Db, id: number, seenInviteNote: string, now: Date): Promise<boolean> {
   const approved = await db
     .update(leads)
     .set({ draftStatus: 'approved', updatedAt: now })
-    .where(and(eq(leads.id, id), eq(leads.draftStatus, 'ready')))
+    .where(and(eq(leads.id, id), eq(leads.draftStatus, 'ready'), eq(leads.inviteNoteDraft, seenInviteNote)))
     .returning({ id: leads.id });
   return approved.length > 0;
 }
