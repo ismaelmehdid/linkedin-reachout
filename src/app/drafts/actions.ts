@@ -3,9 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { getDb } from '@/db/client';
-import type { DraftStatus } from '@/db/schema';
 import { requireSession } from '@/lib/auth/require-session';
-import { generateOneDraft } from '@/lib/drafts/generate';
 import {
   approveAllReadyDrafts,
   approveDraft,
@@ -15,15 +13,11 @@ import {
   saveEditedDraft,
 } from '@/lib/drafts/repo';
 import { checkDraftTexts } from '@/lib/drafts/validate';
-import { createDraftWriter } from '@/lib/openai/client';
-import { readOpenAiConfig } from '@/lib/openai/config';
-import { getSettings } from '@/lib/settings/repo';
+import { generateNextDraft, wroteToLead, type DraftCounts, type GenerateNextResult } from './generate-next';
 
 // Every action below calls requireSession() first: an action runs as a POST to the page that sends it,
-// so the request filter alone does not protect it. The page that calls generateNextDraftAction must allow
-// one generation in its `maxDuration` (120 s); the OpenAI request gives up at 100 s.
-
-export type DraftCounts = Record<DraftStatus, number>;
+// so the request filter alone does not protect it. A page that calls generateNextDraftAction must allow
+// one generation in its `maxDuration` (120 s), as POST /api/drafts/generate does.
 
 /** An action's arguments come from the client, so a lead id is checked before it reaches a query. */
 function checkLeadId(id: unknown): number {
@@ -35,32 +29,14 @@ function checkLeadId(id: unknown): number {
 const draftTextsSchema = z.strictObject({ inviteNote: z.string().max(20_000), firstMessage: z.string().max(20_000) });
 
 /**
- * Takes one lead waiting for drafts and writes them. `blocked` (before any lead is taken) when the OpenAI
- * key or the owner's "About me" is missing. The browser calls it again until `none_left`.
+ * Takes one lead waiting for drafts and writes them (see generateNextDraft). The dashboard calls
+ * POST /api/drafts/generate instead, because the browser dispatches server actions one at a time.
  */
-export async function generateNextDraftAction(): Promise<{
-  status: 'none_left' | 'ready' | 'failed' | 'blocked';
-  leadId: number | null;
-  error: string | null;
-  counts: DraftCounts;
-}> {
+export async function generateNextDraftAction(): Promise<GenerateNextResult> {
   await requireSession();
-  const db = await getDb();
-  const { apiKey, model } = readOpenAiConfig();
-  const blocked = async (error: string) => ({ status: 'blocked' as const, leadId: null, error, counts: await countDrafts(db) });
-  if (apiKey === null) return blocked('missing_api_key');
-  const { aboutMe } = await getSettings(db);
-  if (aboutMe.trim() === '') return blocked('missing_about_me');
-
-  const result = await generateOneDraft({
-    db,
-    writer: createDraftWriter({ apiKey, model }),
-    aboutMe,
-    now: () => new Date(),
-  });
-  if (result.status === 'none_left') return { status: 'none_left', leadId: null, error: null, counts: await countDrafts(db) };
-  revalidatePath('/');
-  return { status: result.status, leadId: result.leadId, error: result.error ?? null, counts: await countDrafts(db) };
+  const result = await generateNextDraft(await getDb());
+  if (wroteToLead(result)) revalidatePath('/');
+  return result;
 }
 
 /** Reads only, so nothing is revalidated. */
