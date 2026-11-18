@@ -18,7 +18,7 @@ Status: agreed design, 2026-11-17.
 | Hosting | Vercel Hobby |
 | Database | Neon Postgres (Vercel Marketplace) + Drizzle ORM |
 | LinkedIn access | Unipile API **v1**, via a small in-house typed `fetch` wrapper (no `unipile-node-sdk`) |
-| Scheduler | cron-job.org calls `GET /api/tick` every 5 minutes during the active hours, with the header `Authorization: Bearer <CRON_SECRET>` |
+| Scheduler | cron-job.org calls `GET /api/tick` every minute during the active hours, with the header `Authorization: Bearer <CRON_SECRET>`. Every 5 minutes also works, with less exact send times (see §8) |
 | Tests | Vitest; flow engine tested with a fake clock and a mocked Unipile client |
 
 ## 3. Configuration
@@ -102,9 +102,25 @@ Webhooks are registered once in the Unipile dashboard with the header `Unipile-A
 | Messages per day (first messages + follow-ups) | 90 |
 | Profile views per day | 90 |
 | Actions per tick | 1 |
-| Random wait before each action | 0–90 s |
+| Pause between two sends | random, 4 to 45 minutes on average (see "Spacing" below) |
+| First send of the day | a random moment in the first 45 minutes of the active hours |
+| Follow-up due time | the delay in days, plus a random 0 to 3 hours |
+| Pause between two invite withdrawals | random, 10 to 30 minutes |
+| Random wait when a send is already late | 0–90 s |
 | Active window | Mon–Fri, 08:30–19:00, `Europe/Paris` |
 | Warm-up ramp | none |
+
+### Spacing
+
+Sends must not follow a clock. A fixed rhythm (one action every 5 minutes from the moment the window opens) is the pattern that marks an account as automated.
+
+- **Random pause after every send.** After each invite or message, the app picks the earliest moment of the next send. It takes the time left in today's active hours, divides it by the number of sends still planned for today, and keeps the result between the minimum and the maximum pause (4 and 45 minutes by default). That is the average. The actual pause is drawn at random between 50% and 150% of it. So a busy day is spread over the whole window, and a light day does not fire everything in the first minutes.
+- **Exact moment.** The next send is planned to the second. A tick that starts shortly before that moment waits until it and then sends. With a tick every minute, every send lands on its planned second. With a tick every 5 minutes, a send can be up to about 3 minutes late, and then gets the random wait of 0–90 s.
+- **Random start of the day.** The first send of a day waits for a random moment inside the first 45 minutes of the active hours. When the app is started in the middle of the day, the first send comes within two minutes.
+- **Follow-ups.** A follow-up becomes due after its delay in days plus a random 0 to 3 hours, so it does not come at the same time of day as the message before it.
+- **Withdrawals.** After an invite withdrawal, the next one waits a random 10 to 30 minutes.
+- All four values are editable in Settings. Setting the pauses to 0 turns spacing off.
+- Spacing lowers how regular the account looks. It does not make automation invisible, and it does not replace low volumes.
 
 - Due messages take priority over new invites.
 - When several actions are due, one is picked at random. After the random wait, the tick reads the app state, the settings and the picked lead again. It sends nothing if the app was paused, the active window closed, or the lead changed in the meantime (a reply, a manual message, a pause); a template saved during the wait is the one that is sent.

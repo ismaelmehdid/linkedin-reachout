@@ -1538,3 +1538,180 @@ npm test && npm run typecheck && npm run lint && npm run build
 
   Expected: every command passes with no errors.
 - [ ] **Step 3: Commit** `docs: add setup and deployment guide`.
+
+---
+
+### Task 18: Random spacing between sends
+
+Added after v1 was merged, on branch `feat/random-pacing`. Spec: §8 "Spacing".
+
+The problem: one action per tick, from the moment the window opens, is a fixed rhythm. The goal: every send lands on a planned, random moment, sends are spread over the active hours, and nothing starts at the same time every day.
+
+**Files:**
+- Create: `src/lib/engine/pacing.ts`, `src/lib/engine/pacing.test.ts`, `drizzle/0001_*.sql` (generated)
+- Modify: `src/db/schema.ts`, `src/lib/schedule/window.ts` and its test, `src/lib/settings/settings.ts` and its test, `src/lib/settings/form.ts` and its test, `src/app/settings/SettingsForm.tsx`, `src/lib/engine/steps.ts` and its test, `src/lib/engine/message.ts`, `src/lib/webhooks/handle.ts`, `src/lib/engine/tick.ts` and its test, `src/test-utils/engine.ts`, `src/lib/leads/display.ts` and its test, `src/components/StatusBar.tsx`, `src/app/page.tsx`, `README.md`
+
+**Interfaces:**
+- Consumes: everything from Tasks 1 to 17 and the fix wave, as it is on `main`.
+- Produces:
+  - Two nullable `timestamptz` columns on `app_state`: `next_outreach_at` and `next_withdrawal_at` (`nextOutreachAt`, `nextWithdrawalAt`), with a generated migration.
+  - `Settings['pacing'] = { minGapMinutes: number; maxGapMinutes: number; dayStartJitterMinutes: number; followupJitterMinutes: number }`, defaults `4`, `45`, `45`, `180`. Whole numbers, 0 or more. A stored settings row without `pacing` gets the defaults through the existing merge.
+  - `validateSettings` messages (exact): `Pause between sends: minimum must not exceed maximum`; `Pause between sends: must be 240 minutes or less`; `First send of the day: must be 180 minutes or less`; `Follow-up time: must be 720 minutes or less`.
+  - `formDataToSettings` reads four more fields, `minGapMinutes`, `maxGapMinutes`, `dayStartJitterMinutes`, `followupJitterMinutes`, into `pacing`. The existing every-field test covers `pacing` too.
+  - `windowBounds(now: Date, w: ActiveWindow): { start: Date; end: Date } | null` in `window.ts`: the opening and closing instants of the window that contains `now`, or null outside the window.
+  - In `pacing.ts`, all pure:
+    - `pickGapMs(input: { timeLeftMs: number; planned: number; pacing: Settings['pacing']; random: () => number }): number`. The average is `timeLeftMs / max(1, planned)`, kept between `minGapMinutes` and `maxGapMinutes`. The result is `Math.round(average × (0.5 + random()))`. When `maxGapMinutes` is 0 the result is 0.
+    - `dayStartAt(windowStart: Date, now: Date, pacing: Settings['pacing'], random: () => number): Date`. With `dayStartJitterMinutes` 0 it returns `now`. Otherwise it draws once, `r = random()`: the candidate is `windowStart + r × dayStartJitterMinutes`; if the candidate is not after `now`, the result is `now + r × 120 s`.
+    - `WITHDRAWAL_GAP_MIN_MINUTES = 10`, `WITHDRAWAL_GAP_MAX_MINUTES = 30`, and `withdrawalGapMs(pacing: Settings['pacing'], random: () => number): number`: 0 when `maxGapMinutes` is 0, otherwise a random value between the two constants.
+  - `nextDueAfterSend(status, sentAt, settings, random?)`: with `random`, and for `messaged` and `followup_1` only, it adds `Math.floor(random() × followupJitterMinutes × 60 000)` ms. `followup_2` (the end of the sequence) gets no jitter. The message action passes `deps.random`; the webhook handler passes its `random` for manual-message timers.
+  - `describeNextSend(state: Pick<AppState, 'running' | 'nextOutreachAt'>, now: Date, timezone: string): string | null` in `display.ts`: `Next send not before <yyyy-MM-dd HH:mm>` when the app is running and `nextOutreachAt` is after `now`, otherwise null. `StatusBar` shows it under the usage line.
+
+**Behavior of the tick.** Everything up to and including the housekeeping budget check stays as it is, except the withdrawal gate. Then:
+
+1. **Withdrawal gate.** `expireOneInvite` runs only when `nextWithdrawalAt` is null or not after `now`. When it returns true, set `nextWithdrawalAt = now + withdrawalGapMs(...)`.
+2. **Start of the day.** Take `bounds = windowBounds(now, settings.window)`. When `nextOutreachAt` is null or before `bounds.start`, set it to `dayStartAt(bounds.start, now, settings.pacing, deps.random)` and store it.
+3. **Not yet.** The longest wait this tick may do is the existing bound: the random-wait maximum, cut by the action start budget. When `nextOutreachAt` is further away than that, return `{ status: 'done', finished, action: null }` without picking a lead and without sleeping.
+4. **Pick** a lead as today. With none, return as today; `nextOutreachAt` stays.
+5. **Wait.** When `nextOutreachAt` is after the current time, sleep exactly until it. Otherwise the send is late: sleep the existing random wait.
+6. **After the wait**, the existing checks and the action run unchanged.
+7. **After the action function returned**, whatever its outcome, plan the next send: `planned` is the smaller of the invites left today, the profile views left today and the unpaused due `queued` leads, plus the smaller of the messages left today and the unpaused leads in a message status whose `nextActionAt` is not after `bounds.end`. Then `nextOutreachAt = deps.now() + pickGapMs({ timeLeftMs: bounds.end − deps.now(), planned, pacing, random })`. When a check after the wait stopped the action before it ran, `nextOutreachAt` is left alone.
+
+Spacing is off when the pacing values are 0: step 2 gives `now`, step 7 gives a gap of 0, step 1 gives a gap of 0, and the tick behaves exactly as before this task. `createTestEngine` saves its settings with all four pacing values at 0, so every existing test keeps passing unchanged. The new tests turn spacing on.
+
+- [ ] **Step 1: Write the failing tests:**
+
+```ts
+// window.test.ts
+it('gives the bounds of the window that contains now, and null outside it', () => {
+  expect(windowBounds(d('2026-11-17T09:00:00Z'), W)).toEqual({ start: d('2026-11-17T07:30:00Z'), end: d('2026-11-17T18:00:00Z') });
+  expect(windowBounds(d('2026-11-17T18:00:00Z'), W)).toBeNull();
+  expect(windowBounds(d('2027-03-29T07:00:00Z'), W)).toEqual({ start: d('2027-03-29T06:30:00Z'), end: d('2027-03-29T17:00:00Z') });
+});
+
+// pacing.test.ts
+const P = { minGapMinutes: 4, maxGapMinutes: 45, dayStartJitterMinutes: 45, followupJitterMinutes: 180 };
+const MIN = 60_000;
+it('spreads the planned sends over the time that is left', () => {
+  expect(pickGapMs({ timeLeftMs: 300 * MIN, planned: 30, pacing: P, random: () => 0.5 })).toBe(10 * MIN);
+  expect(pickGapMs({ timeLeftMs: 300 * MIN, planned: 30, pacing: P, random: () => 0 })).toBe(5 * MIN);
+  expect(pickGapMs({ timeLeftMs: 300 * MIN, planned: 30, pacing: P, random: () => 0.9 })).toBe(14 * MIN);
+});
+it('keeps the average pause between the minimum and the maximum', () => {
+  expect(pickGapMs({ timeLeftMs: 300 * MIN, planned: 1000, pacing: P, random: () => 0.5 })).toBe(4 * MIN);
+  expect(pickGapMs({ timeLeftMs: 300 * MIN, planned: 1, pacing: P, random: () => 0.5 })).toBe(45 * MIN);
+  expect(pickGapMs({ timeLeftMs: 300 * MIN, planned: 0, pacing: P, random: () => 0.5 })).toBe(45 * MIN);
+});
+it('gives no pause when spacing is off', () =>
+  expect(pickGapMs({ timeLeftMs: 300 * MIN, planned: 5, pacing: { ...P, minGapMinutes: 0, maxGapMinutes: 0 }, random: () => 0.5 })).toBe(0));
+it('starts the day at a random moment after the window opens', () =>
+  expect(dayStartAt(new Date('2026-11-17T07:30:00Z'), new Date('2026-11-17T07:31:00Z'), P, () => 0.5)).toEqual(new Date('2026-11-17T07:52:30Z')));
+it('starts within two minutes when the day is already under way', () =>
+  expect(dayStartAt(new Date('2026-11-17T07:30:00Z'), new Date('2026-11-17T09:00:00Z'), P, () => 0.5)).toEqual(new Date('2026-11-17T09:01:00Z')));
+it('does not delay the start when the day-start setting is 0', () =>
+  expect(dayStartAt(new Date('2026-11-17T07:30:00Z'), new Date('2026-11-17T07:31:00Z'), { ...P, dayStartJitterMinutes: 0 }, () => 0.5)).toEqual(new Date('2026-11-17T07:31:00Z')));
+it('pauses 10 to 30 minutes between withdrawals, and not at all when spacing is off', () => {
+  expect(withdrawalGapMs(P, () => 0.5)).toBe(20 * MIN);
+  expect(withdrawalGapMs({ ...P, maxGapMinutes: 0 }, () => 0.5)).toBe(0);
+});
+
+// steps.test.ts
+it('adds a random part of the follow-up jitter to a follow-up, and none to the end of the sequence', () => {
+  const s = { ...DEFAULT_SETTINGS, pacing: { ...DEFAULT_SETTINGS.pacing, followupJitterMinutes: 180 } };
+  expect(nextDueAfterSend('messaged', NOW, s, () => 0.5)).toEqual(new Date('2026-11-19T10:30:00Z'));
+  expect(nextDueAfterSend('followup_2', NOW, s, () => 0.5)).toEqual(new Date('2026-11-20T09:00:00Z'));
+  expect(nextDueAfterSend('messaged', NOW, s)).toEqual(new Date('2026-11-19T09:00:00Z'));
+});
+
+// settings.test.ts
+it('ships spacing defaults and validates them', () => {
+  expect(DEFAULT_SETTINGS.pacing).toEqual({ minGapMinutes: 4, maxGapMinutes: 45, dayStartJitterMinutes: 45, followupJitterMinutes: 180 });
+  const withPacing = (p: Partial<Settings['pacing']>) => ({ ...DEFAULT_SETTINGS, pacing: { ...DEFAULT_SETTINGS.pacing, ...p } });
+  expect(validateSettings(withPacing({ minGapMinutes: 50 }))).toContain('Pause between sends: minimum must not exceed maximum');
+  expect(validateSettings(withPacing({ maxGapMinutes: 241 }))).toContain('Pause between sends: must be 240 minutes or less');
+  expect(validateSettings(withPacing({ dayStartJitterMinutes: 181 }))).toContain('First send of the day: must be 180 minutes or less');
+  expect(validateSettings(withPacing({ followupJitterMinutes: 721 }))).toContain('Follow-up time: must be 720 minutes or less');
+});
+it('fills spacing defaults into stored settings that have none', () =>
+  expect(parseSettings({ caps: { invitesPerDay: 10 } }).pacing).toEqual(DEFAULT_SETTINGS.pacing));
+
+// display.test.ts
+it('says when the next send may happen, only while running and in the future', () => {
+  const at = new Date('2026-11-17T13:07:00Z');
+  expect(describeNextSend({ running: true, nextOutreachAt: at }, NOW, 'Europe/Paris')).toBe('Next send not before 2026-11-17 14:07');
+  expect(describeNextSend({ running: false, nextOutreachAt: at }, NOW, 'Europe/Paris')).toBeNull();
+  expect(describeNextSend({ running: true, nextOutreachAt: NOW }, NOW, 'Europe/Paris')).toBeNull();
+  expect(describeNextSend({ running: true, nextOutreachAt: null }, NOW, 'Europe/Paris')).toBeNull();
+});
+
+// tick.test.ts — a second describe block, with spacing on:
+// e = await createTestEngine({ settings: (s) => ({ ...s, pacing: { minGapMinutes: 4, maxGapMinutes: 45, dayStartJitterMinutes: 45, followupJitterMinutes: 0 } }) })
+const at = (ms: number) => new Date(NOW.getTime() + ms);
+it('sends nothing before the planned moment', async () => {
+  await updateAppState(e.db, { nextOutreachAt: at(10 * 60_000) }); await acceptedDue();
+  expect((await runTick(e.deps)).action).toBeNull();
+  expect(methods()).toEqual([]); expect(e.sleeps).toEqual([]);
+});
+it('waits until the planned second, then sends', async () => {
+  await updateAppState(e.db, { nextOutreachAt: at(40_000) }); await acceptedDue();
+  expect((await runTick(e.deps)).action?.result).toBe('messaged');
+  expect(e.sleeps).toEqual([40_000]);
+});
+it('uses the random wait when the planned moment has passed', async () => {
+  await updateAppState(e.db, { nextOutreachAt: at(-60_000) }); await acceptedDue();
+  await runTick(e.deps);
+  expect(e.sleeps).toEqual([45_000]);
+});
+it('plans the next send a random pause later, spread over the rest of the day', async () => {
+  await updateAppState(e.db, { nextOutreachAt: NOW }); await acceptedDue();
+  for (let i = 0; i < 36; i++) await seedLead(e.db, { slug: `queued-${i}` });
+  await runTick(e.deps);
+  // 9 hours are left (the window closes at 18:00Z); 35 invites are planned (the daily cap), no other message is due.
+  const expected = Math.round(((9 * 60 * 60_000) / 35) * (0.5 + 0.5));
+  expect((await getAppState(e.db)).nextOutreachAt).toEqual(at(expected));
+});
+it('keeps the longest average pause when little is planned', async () => {
+  await updateAppState(e.db, { nextOutreachAt: NOW }); await acceptedDue();
+  await runTick(e.deps);
+  expect((await getAppState(e.db)).nextOutreachAt).toEqual(at(45 * 60_000));
+});
+it('starts the day at a random moment and sends nothing before it', async () => {
+  e.setNow(new Date('2026-11-17T07:31:00Z')); await acceptedDue();
+  expect((await runTick(e.deps)).action).toBeNull();
+  expect((await getAppState(e.db)).nextOutreachAt).toEqual(new Date('2026-11-17T07:52:30Z'));
+  expect(methods()).toEqual([]);
+});
+it('starts within two minutes when the app is started during the day', async () => {
+  await acceptedDue();
+  expect((await runTick(e.deps)).action?.result).toBe('messaged');
+  expect(e.sleeps).toEqual([60_000]);
+});
+it('does not reuse yesterday\'s planned moment', async () => {
+  await updateAppState(e.db, { nextOutreachAt: new Date('2026-11-16T17:50:00Z') }); await acceptedDue();
+  await runTick(e.deps);
+  expect(e.sleeps).toEqual([60_000]);
+});
+it('leaves the planned moment alone when a check after the wait stops the send', async () => {
+  await updateAppState(e.db, { nextOutreachAt: at(30_000) }); await acceptedDue();
+  e.deps.sleep = async () => { await setRunning(e.db, false); };
+  await runTick(e.deps);
+  expect((await getAppState(e.db)).nextOutreachAt).toEqual(at(30_000));
+});
+it('withdraws one invite, then waits a random 10 to 30 minutes before the next', async () => {
+  // The poll is pushed out of the way, so the only Unipile call in this test is the withdrawal.
+  await updateAppState(e.db, { nextOutreachAt: at(10 * 60_000), nextInvitePollAt: at(6 * 3_600_000) });
+  const a = await seedLead(e.db, { status: 'invite_sent', invitationId: 'inv_a', nextActionAt: at(-2 * 3_600_000) });
+  const b = await seedLead(e.db, { status: 'invite_sent', invitationId: 'inv_b', nextActionAt: at(-3_600_000) });
+  await runTick(e.deps); await runTick(e.deps);
+  expect(methods()).toEqual(['cancelInvitation']);
+  expect((await getAppState(e.db)).nextWithdrawalAt).toEqual(at(20 * 60_000));
+  e.setNow(at(21 * 60_000)); await updateAppState(e.db, { nextOutreachAt: at(60 * 60_000) });
+  await runTick(e.deps);
+  expect([(await getLead(e.db, a.id)).status, (await getLead(e.db, b.id)).status]).toEqual(['invite_expired', 'invite_expired']);
+});
+```
+
+- [ ] **Step 2: Run** the test files above. Expected: FAIL, the new names do not exist.
+- [ ] **Step 3: Implement.** Schema columns first, then `npm run db:generate`. Then the settings, the window helper, `pacing.ts`, the due-time jitter, the tick, the form and the status line. In the settings form, add a section "Spacing" with the four number fields and one line of help under each: what the value does, and that 0 turns it off.
+- [ ] **Step 4: README.** In the cron-job.org step, change the schedule to every minute inside the active hours, and say why: sends are planned to the second, and a tick every minute hits that second, while a tick every 5 minutes sends up to about 3 minutes late. Add a short section "Spacing" that explains the four settings in plain words and ends with: spacing lowers how regular the account looks; it does not make automation invisible and it does not replace low volumes.
+- [ ] **Step 5: Run** `npm test && npm run typecheck && npm run lint && npm run build`. Expected: all pass, and every test that existed before this task passes unchanged.
+- [ ] **Step 6: Commit** `feat: space sends at random moments across the active hours`.
