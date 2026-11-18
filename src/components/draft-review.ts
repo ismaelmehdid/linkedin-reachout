@@ -22,12 +22,19 @@ export function canRegenerate(lead: { status: string; draftStatus: string }): bo
   return lead.status === 'queued' && REGENERABLE.includes(lead.draftStatus);
 }
 
-export function hasDrafts(lead: {
+/**
+ * Whether the row's draft editor can open: for an AI lead whose first message can still change (with
+ * empty fields while no draft is written, so the owner can write both by hand), and, once it is sent, for
+ * one that holds drafts to read. Never for a pasted lead, which uses the templates.
+ */
+export function canReview(lead: {
+  status: string;
   draftStatus: string;
   inviteNoteDraft: string | null;
   firstMessageDraft: string | null;
 }): boolean {
-  return lead.draftStatus !== 'none' && lead.inviteNoteDraft !== null && lead.firstMessageDraft !== null;
+  if (lead.draftStatus === 'none') return false;
+  return canEditFirstMessage(lead.status) || lead.inviteNoteDraft !== null || lead.firstMessageDraft !== null;
 }
 
 /** The note is saved trimmed, so it is counted trimmed. */

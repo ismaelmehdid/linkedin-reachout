@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canEditFirstMessage, canEditInviteNote, canRegenerate, hasDrafts, notePreview, noteTooLong } from './draft-review';
+import { canEditFirstMessage, canEditInviteNote, canRegenerate, canReview, notePreview, noteTooLong } from './draft-review';
 
 describe('draft review rules', () => {
   it('lets the note change only while the lead is queued', () => {
@@ -24,10 +24,22 @@ describe('draft review rules', () => {
     expect(canRegenerate({ status: 'invite_sent', draftStatus: 'approved' })).toBe(false);
   });
 
-  it('opens a review only for a lead with written drafts', () => {
-    expect(hasDrafts({ draftStatus: 'ready', inviteNoteDraft: 'n', firstMessageDraft: 'm' })).toBe(true);
-    expect(hasDrafts({ draftStatus: 'failed', inviteNoteDraft: null, firstMessageDraft: null })).toBe(false);
-    expect(hasDrafts({ draftStatus: 'none', inviteNoteDraft: 'n', firstMessageDraft: 'm' })).toBe(false);
+  it('opens a review for an AI lead whose first message can still change, or that holds drafts', () => {
+    const lead = (status: string, draftStatus: string, drafts: string | null = null) => ({
+      status,
+      draftStatus,
+      inviteNoteDraft: drafts,
+      firstMessageDraft: drafts,
+    });
+    expect(canReview(lead('queued', 'ready', 'n'))).toBe(true);
+    // No draft yet, or a failed one: the owner can still write both texts by hand.
+    for (const draftStatus of ['pending', 'generating', 'failed']) expect(canReview(lead('queued', draftStatus))).toBe(true);
+    expect(canReview(lead('accepted', 'approved', 'n'))).toBe(true);
+    // Sent: shown read-only while there is something to read.
+    expect(canReview(lead('messaged', 'approved', 'n'))).toBe(true);
+    expect(canReview(lead('messaged', 'approved'))).toBe(false);
+    // A pasted lead uses the templates.
+    expect(canReview(lead('queued', 'none', 'n'))).toBe(false);
   });
 
   it('counts the note as it is saved, trimmed, against the 300 limit', () => {

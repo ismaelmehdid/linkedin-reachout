@@ -1,5 +1,5 @@
 import { DateTime } from 'luxon';
-import type { EventRow, Lead } from '@/db/schema';
+import type { DraftStatus, EventRow, Lead } from '@/db/schema';
 import type { AppState } from '@/lib/engine/state';
 import { nextStep, type StepKind } from '@/lib/engine/steps';
 import type { ImportResult } from './import';
@@ -13,12 +13,24 @@ const STEP_LABELS: Record<StepKind, string> = {
   finish: 'Mark no response',
 };
 
+/**
+ * What a queued AI lead waits for instead of its invite: the engine invites it only once its drafts are
+ * approved, so no time is given. Approved drafts and pasted leads (`none`) are not listed.
+ */
+const DRAFT_WAIT_LABELS: Partial<Record<DraftStatus, string>> = {
+  pending: 'Waiting for draft',
+  generating: 'Waiting for draft',
+  ready: 'Waiting for draft approval',
+  failed: 'Draft failed',
+};
+
 /** The step the lead waits for and when it is due, or null when its sequence is over. */
 export function describeNextAction(lead: Lead): { label: string; dueAt: Date | null } | null {
   const step = nextStep(lead.status);
   if (step === null) return null;
-  const label = STEP_LABELS[step];
-  return { label: lead.paused ? `Paused · ${label}` : label, dueAt: lead.nextActionAt };
+  const draftWait = step === 'invite' ? DRAFT_WAIT_LABELS[lead.draftStatus] : undefined;
+  const label = draftWait ?? STEP_LABELS[step];
+  return { label: lead.paused ? `Paused · ${label}` : label, dueAt: draftWait === undefined ? lead.nextActionAt : null };
 }
 
 export function leadDisplayName(lead: Pick<Lead, 'firstName' | 'lastName' | 'slug'>): string {

@@ -32,6 +32,24 @@ describe('lead display', () => {
     expect(describeNextAction(make({ status: 'failed', paused: true }))).toBeNull();
   });
 
+  it('says a queued AI lead waits for its drafts, with no time, instead of an invite', () => {
+    const next = (draftStatus: Lead['draftStatus'], patch: Partial<Lead> = {}) =>
+      describeNextAction(make({ status: 'queued', draftStatus, nextActionAt: D, ...patch }));
+    expect(next('ready')).toEqual({ label: 'Waiting for draft approval', dueAt: null });
+    expect(next('pending')).toEqual({ label: 'Waiting for draft', dueAt: null });
+    expect(next('generating')).toEqual({ label: 'Waiting for draft', dueAt: null });
+    expect(next('failed')).toEqual({ label: 'Draft failed', dueAt: null });
+    expect(next('ready', { paused: true })).toEqual({ label: 'Paused · Waiting for draft approval', dueAt: null });
+    // Approved drafts and pasted leads are invited as usual.
+    expect(next('approved')).toEqual({ label: 'Invite', dueAt: D });
+    expect(next('none')).toEqual({ label: 'Invite', dueAt: D });
+    // Past the invite, the draft status no longer holds the lead back.
+    expect(describeNextAction(make({ status: 'invite_sent', draftStatus: 'ready', nextActionAt: D }))).toEqual({
+      label: 'Withdraw invite',
+      dueAt: D,
+    });
+  });
+
   it('names a lead by name or slug and formats local dates', () => {
     expect(leadDisplayName(make({ firstName: 'Jane', lastName: 'Doe' }))).toBe('Jane Doe');
     expect(leadDisplayName(make({ firstName: 'Jane' }))).toBe('Jane');

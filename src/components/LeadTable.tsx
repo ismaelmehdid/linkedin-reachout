@@ -10,7 +10,7 @@ import {
   canEditFirstMessage,
   canEditInviteNote,
   canRegenerate,
-  hasDrafts,
+  canReview,
   noteLength,
   notePreview,
   noteTooLong,
@@ -210,7 +210,7 @@ function DraftEditor({
           </SmallButton>
         )}
       </div>
-      {dirty && row.draftStatus === 'ready' && <Muted>Saving your edit approves it.</Muted>}
+      {dirty && <Muted>Saving your edit approves it.</Muted>}
     </div>
   );
 }
@@ -249,12 +249,12 @@ function DraftCell({
       {row.draftStatus === 'failed' && row.draftError && <Muted>{row.draftError}</Muted>}
       {row.draftStatus === 'ready' && row.inviteNoteDraft && <Muted>{notePreview(row.inviteNoteDraft)}</Muted>}
       <div className="flex flex-wrap gap-1">
-        {hasDrafts(row) && (
+        {canReview(row) && (
           <SmallButton onClick={onToggle} expanded={open}>
             {open ? 'Close' : 'Review'}
           </SmallButton>
         )}
-        {row.draftStatus === 'failed' && canRegenerate(row) && (
+        {row.draftStatus === 'failed' && !open && canRegenerate(row) && (
           <SmallButton onClick={regenerateFailed} disabled={pending}>
             Regenerate
           </SmallButton>
@@ -279,7 +279,7 @@ const COLUMN_COUNT = 7;
 function LeadRows({ row }: { row: LeadRow }) {
   const [open, setOpen] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
-  const reviewing = open && hasDrafts(row);
+  const reviewing = open && canReview(row);
   // A new draft, an approval or a saved edit gives the editor fresh texts.
   const draftKey = `${row.draftStatus}\u0000${row.inviteNoteDraft}\u0000${row.firstMessageDraft}`;
 
