@@ -254,6 +254,17 @@ describe('invite action', () => {
       expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'already_connected', nextActionAt: NOW, updatedAt: NOW });
       expect(methods()).toEqual(['getProfile']);
     });
+    it.each([
+      ['regenerated', { draftStatus: 'generating', inviteNoteDraft: null, firstMessageDraft: null }],
+      ['edited back to ready', { draftStatus: 'ready', inviteNoteDraft: 'A new note' }],
+      ['edited and approved again', { inviteNoteDraft: 'A new note' }],
+    ] as const)('sends no invite when the drafts were %s during the profile fetch', async (_label, patch) => {
+      e.fake.onCall('getProfile', async () => { await e.db.update(leads).set(patch).where(eq(leads.id, lead.id)); });
+      expect((await runAi()).result).toBe('superseded');
+      expect(methods()).toEqual(['getProfile']);
+      expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'queued', providerId: null, failureReason: null, ...patch });
+      expect((await listEvents(e.db)).map((x) => x.type)).toEqual(['profile_view']);
+    });
     it('fails with draft_not_approved and sends nothing when a founder\'s drafts are not approved', async () => {
       expect((await runAi({ draftStatus: 'ready' })).result).toBe('failed');
       expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'failed', failureReason: 'draft_not_approved' });

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS, type Settings } from '@/lib/settings/settings';
 import { checkLeadTemplates, leadInviteNote, leadMessageText, renderForLead } from './lead-templates';
 
-const lead = { firstName: 'Jane', lastName: 'Doe', headline: null, company: 'Acme', position: null, location: null };
+const lead = { firstName: 'Jane', lastName: 'Doe', headline: null, company: 'Acme', position: null, location: null, draftStatus: 'none' as const };
 const withT = (t: Partial<Settings['templates']>) => ({ ...DEFAULT_SETTINGS, templates: { ...DEFAULT_SETTINGS.templates, ...t } });
 
 describe('lead templates', () => {

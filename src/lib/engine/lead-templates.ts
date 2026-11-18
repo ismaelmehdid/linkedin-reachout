@@ -5,8 +5,8 @@ import type { MessageStep } from './steps';
 
 export type LeadVariableFields = Pick<Lead, 'firstName' | 'lastName' | 'headline' | 'company' | 'position' | 'location'>;
 
-/** What decides the texts a lead gets. A lead without draft fields is treated as one with no drafts. */
-export type LeadTextFields = LeadVariableFields & Partial<Pick<Lead, 'draftStatus' | 'inviteNoteDraft' | 'firstMessageDraft'>>;
+/** What decides the texts a lead gets. A draft left out counts as a blank one. */
+export type LeadTextFields = LeadVariableFields & Pick<Lead, 'draftStatus'> & Partial<Pick<Lead, 'inviteNoteDraft' | 'firstMessageDraft'>>;
 
 /**
  * The text a lead gets, or why it cannot be sent: a template result, or for an AI lead `draft_not_approved`
@@ -39,10 +39,10 @@ export function renderForLead(template: string, lead: LeadVariableFields): Rende
 
 /**
  * An AI lead: an uploaded founder, whose invite note and first message are its drafts once approved, and
- * never the templates. A lead without draft fields, or with `none`, is a pasted lead that uses the templates.
+ * never the templates. A lead with `none` is a pasted lead that uses the templates.
  */
 export function isAiLead(lead: LeadTextFields): boolean {
-  return lead.draftStatus !== undefined && lead.draftStatus !== 'none';
+  return lead.draftStatus !== 'none';
 }
 
 /** A draft goes out as written, and only once approved. It is never empty and never holds a raw tag. */
