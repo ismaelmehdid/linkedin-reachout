@@ -8,6 +8,7 @@ const fullForm = (over: Record<string, string> = {}) => {
   const fd = new FormData();
   const s = DEFAULT_SETTINGS;
   const fields: Record<string, string> = {
+    aboutMe: 'I moved to San Francisco.',
     inviteNote: 'Hi {{first_name}}',
     firstMessage: s.templates.firstMessage,
     followup1: s.templates.followup1,
@@ -31,6 +32,7 @@ const sortedKeys = (value: object) => Object.keys(value).sort();
 describe('formDataToSettings', () => {
   it('maps the form fields to settings', () =>
     expect(formDataToSettings(fullForm({ invitesPerDay: '20' }))).toEqual({
+      aboutMe: 'I moved to San Francisco.',
       templates: { ...DEFAULT_SETTINGS.templates, inviteNote: 'Hi {{first_name}}' },
       delays: DEFAULT_SETTINGS.delays,
       caps: { ...DEFAULT_SETTINGS.caps, invitesPerDay: 20 },

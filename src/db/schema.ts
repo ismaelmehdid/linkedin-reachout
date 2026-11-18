@@ -37,6 +37,42 @@ export type EventType =
   | 'webhook_received'
   | 'action_failed';
 
+/**
+ * Where a lead's AI-written drafts stand. `none`: a lead pasted as a URL, which uses the templates.
+ * An uploaded founder starts `pending`. `ready` is written by the AI and not yet read; `approved` is
+ * approved or edited by the owner. Only `none` and `approved` leads are ever invited.
+ */
+export const DRAFT_STATUSES = ['none', 'pending', 'generating', 'ready', 'approved', 'failed'] as const;
+
+export type DraftStatus = (typeof DRAFT_STATUSES)[number];
+
+/** A job of the founder's company, as uploaded. */
+export type LeadContextJob = {
+  title: string;
+  category: string | null;
+  location: string | null;
+  remote: string | null;
+  salary: string | null;
+  equity: string | null;
+  url: string | null;
+  /** Cut to its first characters at upload. */
+  description: string;
+};
+
+/** What the upload knows about a founder and their company: the AI writes the drafts from it. */
+export type LeadContext = {
+  founder: { name: string; bio: string | null; pastCompanies: string | null };
+  company: {
+    name: string;
+    batch: string | null;
+    website: string | null;
+    oneLiner: string | null;
+    description: string | null;
+    teamSize: number | null;
+    jobs: LeadContextJob[];
+  };
+};
+
 export type LastAction =
   | 'invite_sent'
   | 'already_connected'
@@ -80,6 +116,15 @@ export const leads = pgTable(
     nextActionAt: timestamptz('next_action_at'),
     lastActionAt: timestamptz('last_action_at'),
     lastAction: text('last_action').$type<LastAction>(),
+    /** Null for a lead pasted as a URL. */
+    context: jsonb('context').$type<LeadContext>(),
+    draftStatus: text('draft_status').$type<DraftStatus>().notNull().default('none'),
+    inviteNoteDraft: text('invite_note_draft'),
+    firstMessageDraft: text('first_message_draft'),
+    /** Why the last generation failed. */
+    draftError: text('draft_error'),
+    /** When a generation took the lead, so that a run that died can be taken again. */
+    draftClaimedAt: timestamptz('draft_claimed_at'),
     createdAt: timestamptz('created_at').notNull().defaultNow(),
     updatedAt: timestamptz('updated_at').notNull().defaultNow(),
   },

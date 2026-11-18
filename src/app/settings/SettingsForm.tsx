@@ -1,7 +1,7 @@
 'use client';
 
 import { startTransition, useActionState, useState, type FormEvent } from 'react';
-import type { Settings } from '@/lib/settings/settings';
+import { ABOUT_ME_MAX_LENGTH, type Settings } from '@/lib/settings/settings';
 import {
   INVITE_NOTE_MAX_LENGTH,
   renderTemplate,
@@ -134,6 +134,22 @@ export default function SettingsForm({ settings, leads }: { settings: Settings; 
 
   return (
     <form action={formAction} onSubmit={handleSubmit} className="flex flex-col gap-8">
+      <section className="flex flex-col gap-2">
+        <h2 className="text-lg font-semibold">About me</h2>
+        <p className="text-sm text-zinc-500">
+          Your pitch, in your own words. The AI writes each uploaded founder&apos;s invite note and first message from
+          it, and uses no other fact about you.
+        </p>
+        <textarea
+          name="aboutMe"
+          aria-label="About me"
+          defaultValue={settings.aboutMe}
+          rows={6}
+          maxLength={ABOUT_ME_MAX_LENGTH}
+          className={INPUT_CLASS}
+        />
+      </section>
+
       <section className="flex flex-col gap-4">
         <h2 className="text-lg font-semibold">Templates</h2>
         <p className="text-sm text-zinc-500">

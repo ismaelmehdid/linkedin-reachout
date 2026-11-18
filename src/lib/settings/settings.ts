@@ -5,6 +5,8 @@ import type { ActiveWindow } from '@/lib/schedule/window';
 export type Settings = {
   templates: { inviteNote: string; firstMessage: string; followup1: string; followup2: string };
   templatesSaved: boolean;
+  /** The owner's pitch, in the owner's words. The AI writes every draft from it; generation refuses to run while it is blank. */
+  aboutMe: string;
   delays: {
     firstMessageMinMinutes: number;
     firstMessageMaxMinutes: number;
@@ -42,6 +44,7 @@ export const DEFAULT_SETTINGS: Settings = {
     followup2: 'Hi {{first_name}}, last note from me. Happy to chat whenever it suits you.',
   },
   templatesSaved: false,
+  aboutMe: '',
   delays: {
     firstMessageMinMinutes: 60,
     firstMessageMaxMinutes: 180,
@@ -77,6 +80,7 @@ const settingsSchema = z.object({
     followup2: z.string(),
   }),
   templatesSaved: z.boolean(),
+  aboutMe: z.string(),
   delays: z.object({
     firstMessageMinMinutes: count,
     firstMessageMaxMinutes: count,
@@ -203,8 +207,12 @@ const DAY_DELAYS: [keyof Settings['delays'], string][] = [
   ['inviteExpiryDays', 'Invite expiry'],
 ];
 
+/** Long enough for any pitch, short enough to keep every generation's prompt small. */
+export const ABOUT_ME_MAX_LENGTH = 4000;
+
 export function validateSettings(s: Settings): string[] {
   const errors = templateErrors(s.templates);
+  if (s.aboutMe.length > ABOUT_ME_MAX_LENGTH) errors.push(`About me: must be ${ABOUT_ME_MAX_LENGTH} characters or less`);
   if (s.delays.firstMessageMinMinutes > s.delays.firstMessageMaxMinutes) {
     errors.push('First message delay: minimum must not exceed maximum');
   }

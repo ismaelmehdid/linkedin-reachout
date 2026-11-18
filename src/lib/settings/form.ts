@@ -12,12 +12,13 @@ function count(form: FormData, name: string): number {
 }
 
 /**
- * Reads the settings form. Every key of `templates`, `delays`, `caps`, `pacing` and `window` is always present, even when
+ * Reads the settings form. Every key of `aboutMe`, `templates`, `delays`, `caps`, `pacing` and `window` is always present, even when
  * the form leaves a field out: `saveSettings` merges its input over the defaults, so a missing key would be
  * silently reset to its default instead of rejected. The result is checked by `saveSettings`, hence `unknown`.
  */
 export function formDataToSettings(form: FormData): unknown {
   const settings: Omit<Settings, 'templatesSaved'> = {
+    aboutMe: text(form, 'aboutMe'),
     templates: {
       inviteNote: text(form, 'inviteNote'),
       firstMessage: text(form, 'firstMessage'),

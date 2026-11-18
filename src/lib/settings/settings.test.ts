@@ -145,3 +145,11 @@ describe('startBlockers', () => {
   it('lets the placeholders be saved, so a cap can be changed before the templates are written', () =>
     expect(validateSettings(DEFAULT_SETTINGS)).toEqual([]));
 });
+
+describe('aboutMe', () => {
+  it('defaults to blank and is bounded', () => {
+    expect(DEFAULT_SETTINGS.aboutMe).toBe('');
+    expect(validateSettings({ ...DEFAULT_SETTINGS, aboutMe: 'x'.repeat(4001) })).toContain('About me: must be 4000 characters or less');
+    expect(validateSettings({ ...DEFAULT_SETTINGS, aboutMe: 'x'.repeat(4000) })).not.toContain('About me: must be 4000 characters or less');
+  });
+});
