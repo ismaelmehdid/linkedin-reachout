@@ -5,6 +5,7 @@ import { getDb } from '@/db/client';
 import { requireSession } from '@/lib/auth/require-session';
 import { setRunningUnlessBlocked } from '@/lib/engine/running';
 import { importLeads, type ImportResult } from '@/lib/leads/import';
+import { importFounders, type FounderImportResult } from '@/lib/leads/import-founders';
 import { removeLead, retryFailedLead, setLeadPaused } from '@/lib/leads/repo';
 
 // Every action below calls requireSession() first: an action runs as a POST to the page that sends it,
@@ -20,6 +21,14 @@ export async function importLeadsAction(_prev: ImportResult | null, formData: Fo
   await requireSession();
   const text = formData.get('urls');
   const result = await importLeads(await getDb(), typeof text === 'string' ? text : '', new Date());
+  revalidatePath('/');
+  return result;
+}
+
+/** One batch of the founders the browser read from the scraper's files; `importFounders` checks every record. */
+export async function importFoundersAction(records: unknown): Promise<FounderImportResult> {
+  await requireSession();
+  const result = await importFounders(await getDb(), records, new Date());
   revalidatePath('/');
   return result;
 }
