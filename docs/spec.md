@@ -169,7 +169,7 @@ These defaults stay under the limits Unipile documents for paid accounts (80–1
 | 5 failed actions in a row, with no successful send in between | Auto-pause all sending and show a banner on the dashboard. |
 | 3 limit, 5xx or network errors in a row, with no successful send in between | Auto-pause all sending and show a banner on the dashboard. |
 
-An AI lead (§9) whose text cannot be sent is set to `failed` before anything is sent, and never falls back to a template: `draft_not_approved` when its drafts are no longer approved at send time, `missing_draft` when an approved draft is empty.
+An AI lead (§9) whose text cannot be sent is set to `failed` before anything is sent, and never falls back to a template: `missing_draft` when an approved draft is empty, and `draft_not_approved` as a last guard when a lead reaches a send with drafts that are not approved. A draft changed while the engine works on its invite is not sent: the action is skipped (`superseded`) and the lead waits in the queue.
 
 ## 11. Dashboard
 
