@@ -166,10 +166,10 @@ These defaults stay under the limits Unipile documents for paid accounts (80–1
 | `errors/cannot_invite_attendee`, `invalid_recipient`, `blocked_recipient`, `user_unreachable`, `no_connection_with_recipient`, profile 404 | Status `failed` with the reason. |
 | HTTP 401 or 403, or an account-level error (disconnected account, expired credentials, missing subscription) | Auto-pause at once with the reason. Lead unchanged. |
 | Any other error | Retry once on the next tick, then `failed`. |
-
-An AI lead (§9) whose text cannot be sent is set to `failed` before anything is sent, and never falls back to a template: `draft_not_approved` when its drafts are no longer approved at send time, `missing_draft` when an approved draft is empty.
 | 5 failed actions in a row, with no successful send in between | Auto-pause all sending and show a banner on the dashboard. |
 | 3 limit, 5xx or network errors in a row, with no successful send in between | Auto-pause all sending and show a banner on the dashboard. |
+
+An AI lead (§9) whose text cannot be sent is set to `failed` before anything is sent, and never falls back to a template: `draft_not_approved` when its drafts are no longer approved at send time, `missing_draft` when an approved draft is empty.
 
 ## 11. Dashboard
 
@@ -178,7 +178,7 @@ An AI lead (§9) whose text cannot be sent is set to `failed` before anything is
 - Per-row actions: pause, retry (failed only; the lead goes back to the status it failed in), remove (deletes the lead but keeps its events, so caps stay correct; the person can be pasted again).
 - **Upload founders** form next to the URL textarea (§5).
 - **AI drafts panel**, above the lead table once at least one lead has drafts: the counts (pending, generating, ready to approve, approved, failed), **Generate drafts**, **Stop**, **Approve all ready drafts** (with a confirmation that gives the count) and **Retry failed** (every failed draft back to `pending`). Generate drafts runs four workers in the browser, each calling `POST /api/drafts/generate` for one lead after another until none is left; the progress line updates after each lead. The tab must stay open; pressing the button again continues where it stopped. Stop takes no new lead and lets the generations in flight finish. Generation is blocked, before any lead is taken, while `OPENAI_API_KEY` or "About me" is missing, and the panel says which. The panel warns that approved drafts are sent as soon as the app is running.
-- A **Draft** column in the lead table: the draft status (`—` for a pasted lead), the reason of a failed draft with **Regenerate**, and the start of a ready note. **Review** opens both drafts under the row, with a live `N/300` counter on the note, **Save** (approves the edit), **Approve** (ready drafts only, and only the note shown: a draft rewritten since must be reviewed again) and **Regenerate**.
+- A **Draft** column in the lead table: the draft status (`—` for a pasted lead), the reason of a failed draft with **Regenerate**, and the start of a ready note. A queued AI lead whose drafts are not approved shows, as its next action, "Waiting for draft" (pending or generating), "Waiting for draft approval" (ready) or "Draft failed", with no time, instead of the invite. **Review** opens both drafts under the row (for any AI lead whose first message can still change, with empty fields while no draft is written, so the owner can write both by hand; read-only once sent), with a live `N/300` counter on the note, **Save** (approves the edit), **Approve** (ready drafts only, and only the note shown: a draft rewritten since must be reviewed again) and **Regenerate**.
 - Settings page: templates with preview, delays, caps, active window, and "About me", the owner's pitch the AI writes from.
 - Event log of the last 50 events: each failed action with its reason, each webhook with its outcome, each send with its text.
 - No reply notifications in v1; the "Replied" filter is the inbox.
