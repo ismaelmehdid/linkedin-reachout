@@ -80,15 +80,22 @@ Do these steps in order.
    2. Add Neon from the Vercel Marketplace. It sets `DATABASE_URL`.
    3. Set the other variables from the table above. Set `DRY_RUN=true`. Add `OPENAI_API_KEY` only if you will upload founders.
    4. Deploy.
-3. **Migrations.** Production migrations are not automatic. Run them by hand against the Neon database, with the Neon URL in place of the placeholder. Keep the single quotes: the URL can contain `&`, and without quotes the shell cuts the command there. The value is the `DATABASE_URL` that the Neon integration added. Read it in Vercel under Settings → Environment Variables. It is also shown in the Neon console:
+3. **Migrations.** Vercel applies them by itself. Each production build ends with the migrations that the database does not have yet (the build command is in `vercel.json`). The build log then shows `Migrations applied.` with the number of new and recorded migrations and the table names. Each migration is applied completely or not at all. If one fails, the build fails with `Migration failed in <name>:` and the reason, the deployment before it keeps serving, and the next build tries again. Preview deployments never migrate, because they get the production `DATABASE_URL`: their build log shows `Migrations skipped`.
+
+   Three things follow from this:
+   - The deployment before it keeps running until the new one is live, and it runs again after an Instant Rollback. So a migration must not break code that is already deployed: add tables and columns, give a new column a default or let it be empty, and rename or drop only in a later release.
+   - The very first build, right after the import in step 2.1, fails with `DATABASE_URL is not set for this deployment`, because Neon is not there yet. Finish steps 2.2 to 2.4.
+   - Keep "Automatically expose System Environment Variables" on in the Vercel project. It is on by default. The build reads `VERCEL_ENV` to tell a production deployment from a preview, and fails without it.
+
+   To run the migrations by hand, for example to repair a database, put the Neon URL in place of the placeholder. Keep the single quotes: the URL can contain `&`, and without quotes the shell cuts the command there. Vercel does not show that URL again, because the Neon integration stores it as a sensitive value. Copy it from the Neon console, under Connect:
 
    ```bash
    DATABASE_URL='<neon url>' npm run db:migrate
    ```
 
-   Run this again after any release that adds a migration.
+   It prints the same lines as the build.
 
-   If the dashboard shows the error page "This page couldn't load" right after a successful login, the app cannot read the database. Check `DATABASE_URL`, and check that this step ran.
+   If the dashboard shows the error page "This page couldn't load" right after a successful login, the app cannot read the database. Check `DATABASE_URL`, and check in the build log that the migrations ran.
 4. **Unipile webhooks.** In the Unipile dashboard, go to Webhooks and create two webhooks:
    - One Messaging webhook, event `message_received`.
    - One Users webhook, event `new_relation`.

@@ -195,6 +195,7 @@ Failure reasons that come from the AI drafts (§10): `draft_not_approved`, `miss
 - Each tick takes a lease lock: a conditional update of `tick_lock_until` on the single app-state row. Neon's HTTP driver has no sessions, so session advisory locks do not apply. A tick that cannot take the lock exits immediately, so ticks never overlap. A crashed tick's lease expires after 4 minutes.
 - All pending work is stored as rows with a `due_at`; a missed tick only delays work.
 - Every action sent and every webhook received is logged in an `events` table for debugging.
+- Each production build on Vercel ends by applying the migrations the database does not have yet, each one completely or not at all. A migration that fails stops the deployment, and the one before it keeps serving. Preview deployments never migrate: they get the production `DATABASE_URL`. A migration must keep the already deployed code working, because that code runs until the new deployment is live.
 
 ## 14. Cost
 
