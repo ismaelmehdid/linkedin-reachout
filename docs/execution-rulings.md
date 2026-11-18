@@ -105,6 +105,21 @@ The first deployment had three of the eight variables. The login form then answe
 59. **Nothing else changed: the request filter and the dashboard still let the error through.** A browser that already holds a session sees Next's error page while a variable other than `APP_PASSWORD` is wrong. A wrong `APP_PASSWORD` ends its session, and the login page then shows the message. A change to the request filter could not be tested on a real deployment here, and a mistake in it locks the owner out. If wrong: the owner reads "This page couldn't load" again in that case; the guide now says what it means.
 60. **The guide now quotes the Neon URL in the migration command, and says what the dashboard error page means right after a login.** Both came up while diagnosing the first deployment: a Neon URL can contain `&`, where the shell cuts an unquoted command, and a dashboard that cannot read the database shows the same error page. If wrong: nothing.
 
+## Founder import and AI drafts (added after the first deployment, branch `feat/founder-import`)
+
+The owner asked to upload the YC founder scraper's output and contact each founder with an invite note and a first message written by OpenAI. The design is `docs/superpowers/specs/2026-11-17-founder-import-ai-drafts-design.md`; spec §5, §9, §10 and §11 describe the result. These points were decided without asking:
+
+61. **The pitch lives in the "About me" setting, not in code.** Nothing about the owner is committed. If wrong: nothing; the owner pastes it in Settings.
+62. **`companies.json` wins over the CSVs for a company both hold; only coding jobs are sent to the AI, by the same rule for both files; each job description is cut to 3,000 characters.** If wrong: change the category list or the cut in the upload parser.
+63. **Reasoning effort `high`, four drafts written at once, and a note of 280 characters asked for** (headroom under LinkedIn's 300). If wrong: change the effort in the OpenAI client or `DRAFT_WORKERS` in `src/components/draft-run.ts`.
+64. **Follow-ups stay on the templates, and the invite-note and first-message templates stay required for Start**, because pasted leads still use them. If wrong: nothing; write templates that suit pasted leads.
+65. **No AI call happens without the owner pressing Generate drafts** (or Regenerate, then Generate drafts). Not in the tick, not at send time. If wrong: nothing; a draft is only written when asked.
+66. **An explicit approval before any AI draft is sent.** A written draft is `ready`, which the engine never sends; Approve, Approve all ready drafts, or saving an edit makes it `approved`. A founder whose drafts are not approved waits in the queue and never falls back to a template. If wrong: press Approve all ready drafts after reading a sample.
+67. **The first message reads true for a founder who was already a connection**: it never thanks them for accepting, since such a founder gets it with no invite before it. If wrong: nothing.
+68. **The dashboard's workers call a route, `POST /api/drafts/generate`, not the server action.** Next dispatches server actions one at a time per browser, so four workers on the action would write one draft at a time (about two hours for 260 founders) and hold every Save and Approve behind a generation. The route checks the session itself and refuses a request whose `Origin` is not this host. The action stays, with the same code behind it. If wrong: nothing; the action can be used again by changing one line in the panel.
+69. **Approve applies only to the note on screen.** If the draft was rewritten since the row was opened, approving is refused with "This draft changed since you opened it. Review it again.", and Approve is hidden while the texts are edited (saving the edit approves it). If wrong: nothing; it costs one more click.
+70. **The table refreshes once a generation run ends, not after each draft.** The counts update after each draft. If wrong: reload the page to see new drafts during a run.
+
 ## Left open, for the owner
 
 The final reviewer approved the branch for merge and listed these Minor points. None was fixed; there was one fix wave by design.

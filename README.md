@@ -50,6 +50,10 @@ Other checks: `npm run typecheck`, `npm run lint`, `npm run build`.
 | `CRON_SECRET` | Required on `/api/tick`. At least 32 characters |
 | `WEBHOOK_SECRET` | Expected in the `Unipile-Auth` header on webhook calls. At least 32 characters |
 | `DRY_RUN` | Required: `true` or `false`. When `true`, no Unipile write endpoint is called |
+| `OPENAI_API_KEY` | Optional. Used only to write the AI drafts of uploaded founders. Without it the app runs, and only Generate drafts says it is missing |
+| `OPENAI_MODEL` | Optional. The model for the drafts, `gpt-6.2-astra` by default |
+
+Locally, put `OPENAI_API_KEY` (and `OPENAI_MODEL` if you want another model) in `.env.local` and restart `npm run dev`. In production, add them in the Vercel project under Settings → Environment Variables and redeploy. The key is never shown, logged or stored by the app.
 
 The deploy succeeds even with weak secrets, but every request then fails until each secret is long enough. Generate each of the three secrets with:
 
@@ -72,9 +76,9 @@ Do these steps in order.
    2. In the Unipile dashboard, connect your LinkedIn account.
    3. Copy the DSN, an access token (this is `UNIPILE_API_KEY`) and the account id.
 2. **Vercel.**
-   1. Import the repository as a new project. Fluid compute is on by default for new projects. Keep it on: the tick route can run for up to 180 s (`maxDuration = 180`), which needs it.
+   1. Import the repository as a new project. Fluid compute is on by default for new projects. Keep it on: the tick route can run for up to 180 s (`maxDuration = 180`), and one AI draft generation for up to 120 s (`maxDuration = 120` on the dashboard and on `/api/drafts/generate`), which needs it.
    2. Add Neon from the Vercel Marketplace. It sets `DATABASE_URL`.
-   3. Set the other variables from the table above. Set `DRY_RUN=true`.
+   3. Set the other variables from the table above. Set `DRY_RUN=true`. Add `OPENAI_API_KEY` only if you will upload founders.
    4. Deploy.
 3. **Migrations.** Production migrations are not automatic. Run them by hand against the Neon database, with the Neon URL in place of the placeholder. Keep the single quotes: the URL can contain `&`, and without quotes the shell cuts the command there. The value is the `DATABASE_URL` that the Neon integration added. Read it in Vercel under Settings → Environment Variables. It is also shown in the Neon console:
 
@@ -126,6 +130,21 @@ Do this rehearsal on the deployed app, against the real Neon database, and not o
 8. In Settings, set small caps for the first live week, for example 5 invites per day. The dry run never calls a Unipile write endpoint, so the first real invite, acceptance, message and withdrawal are the first real test of those calls.
 9. Paste your real list and press Start.
 
+## Founder upload and AI drafts
+
+The dashboard can import the output of the YC founder scraper and contact each founder with a note and a first message written for them by OpenAI. Follow-ups 1 and 2 stay on your templates.
+
+1. **About me.** In Settings, write your pitch under "About me": who you are, what you are looking for, what you want from the conversation. The AI writes from it and from the founder's company and jobs, and from nothing else. Generation refuses to start while it is empty.
+2. **OpenAI key.** Set `OPENAI_API_KEY` (see [Environment variables](#environment-variables)).
+3. **Upload.** Under "Upload founders", choose `companies.json`, or `founders.csv` together with `jobs.csv`. The files are read in your browser. Every founder with a LinkedIn profile URL becomes a `queued` lead with the company and its coding jobs kept as context. The summary says how many were added, how many were already leads, and how many were skipped for a missing or invalid LinkedIn URL. If a file is missing or unreadable, the form asks before importing: a founder imported without its jobs never gets them later, because a second upload skips it.
+4. **Generate drafts.** The "AI drafts" panel appears above the lead table. Press **Generate drafts**. Four drafts are written at a time (each worker calls `POST /api/drafts/generate`, which needs your session and a same-origin request), each in about 30 seconds, so about 260 founders take roughly half an hour. Keep the tab open. **Stop** takes no new lead and lets the drafts in progress finish; pressing Generate drafts again continues where it stopped.
+5. **Review.** In the lead table, the Draft column shows each lead's draft status. **Review** opens the note (with a live counter, at most 300 characters) and the first message. **Save** keeps your edit and approves it, **Approve** approves the draft as written, and **Regenerate** throws it away and puts the lead back in the queue for Generate drafts. **Approve all ready drafts** in the panel approves every ready draft at once, after a confirmation.
+6. **Start.** Only approved drafts are sent, and they are sent as soon as the app is running. A founder whose drafts are not approved waits in the queue; it is never sent a template instead.
+
+OpenAI answers 503 or 429 now and then. That lead's draft is then `failed`, with the reason under its status (for example `rate_limited` or `openai_error: 503`). **Retry failed** in the panel puts every failed draft back to pending, and **Regenerate** on a row does it for one; then press Generate drafts again.
+
+Generation never touches LinkedIn, so it behaves the same in dry run and live, and it only runs when you press the button.
+
 ## Spacing
 
 Sends do not follow a clock: one action every 5 minutes from the moment the window opens is the rhythm that marks an account as automated. Each invite and message is planned for a random moment instead. Settings has four values for it, under Spacing:
@@ -148,6 +167,7 @@ Spacing lowers how regular the account looks; it does not make automation invisi
 ## Costs
 
 - Unipile: 49 EUR per month, which covers up to 10 accounts, after a 7-day free trial.
+- OpenAI, for the AI drafts only: pay per use. Writing the drafts of about 260 founders costs roughly 30 to 60 USD with `gpt-6.2-astra`. Each regeneration and each retry costs one more draft.
 - Vercel Hobby and cron-job.org: free.
 - Neon free tier: free only while cron-job.org calls the tick during the active hours alone. Called around the clock, the tick uses about 180 compute-hours a month against a free allowance of 100, and Neon then suspends the database until the next month.
 - Vercel's Hobby plan is for personal, non-commercial use. Commercial use needs the Pro plan.

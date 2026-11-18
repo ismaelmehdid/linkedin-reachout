@@ -35,6 +35,8 @@ Environment variables:
 | `CRON_SECRET` | Required on `/api/tick`. At least 32 characters; generate with `openssl rand -base64 32` |
 | `WEBHOOK_SECRET` | Expected in the `Unipile-Auth` header on webhook calls. At least 32 characters; generate with `openssl rand -base64 32` |
 | `DRY_RUN` | Required, exactly `true` or `false`. When `true`, no Unipile write endpoint is called. Any other value, or none, makes every request fail as misconfigured, so a typo can never switch the app to live sending |
+| `OPENAI_API_KEY` | Optional. Used only to write the AI drafts of uploaded founders (§5). Without it the app runs, and only draft generation reports it missing |
+| `OPENAI_MODEL` | Optional. The OpenAI model for the drafts, `gpt-6.2-astra` by default |
 
 The LinkedIn account is connected manually in the Unipile dashboard. There is no hosted-auth flow in the app.
 
@@ -45,6 +47,7 @@ The LinkedIn account is connected manually in the Unipile dashboard. There is no
 - The app refuses to run with weak secrets: every request fails while `APP_PASSWORD` is under 16 characters, or `CRON_SECRET` or `WEBHOOK_SECRET` is under 32. The app is public, and the only brake on password guessing is a 1 s wait per wrong attempt.
 - While the configuration is invalid (a variable is missing or too short, or `DRY_RUN` is not `true` or `false`), login opens no session and answers with a message that points to the function log. The message names no variable; the log does.
 - `/api/tick` rejects requests without the header `Authorization: Bearer <CRON_SECRET>`.
+- `POST /api/drafts/generate` writes the AI drafts of one lead for the dashboard (§11). It requires the session cookie (the request filter checks it, and the route checks it again, as the server actions do) and answers 401 without it. It answers 403 unless the `Origin` header names the host the request was sent to (`x-forwarded-host`, else `host`), the check Next makes on a server action. The session cookie is `SameSite=Lax`, so a cross-site POST never carries it; the origin check is defence in depth. It is a route and not a server action because the browser runs server actions one at a time, and the dashboard runs four generations at once.
 - `/api/webhooks/unipile` rejects requests without `Unipile-Auth: <WEBHOOK_SECRET>`. Unipile v1 webhooks are not signed, so this header is the only check.
 
 ## 5. Lead input
@@ -54,6 +57,7 @@ The LinkedIn account is connected manually in the Unipile dashboard. There is no
 - The normalized slug (`public_identifier`) is the dedupe key until the `provider_id` is known; from then on `provider_id` is the key.
 - A person already present in the database, in any status, is skipped and reported as "already contacted". The tool never contacts the same person twice. A `failed` lead can be retried manually from its row.
 - New leads are inserted with status `queued`.
+- **Upload founders.** A second form takes the files of the YC founder scraper: `companies.json` alone, or `founders.csv` with `jobs.csv` (any combination; files are recognised by their content). They are parsed in the browser and sent to the server in small batches. Every founder with a LinkedIn profile URL becomes a `queued` lead, with the founder (name, bio, past companies) and the company (name, batch, website, one-liner, description, team size, coding jobs) kept on the lead as its context. Only coding jobs are kept, with each description cut to 3,000 characters; `companies.json` wins over the CSVs for a company both hold. The same URL rules and duplicate check apply as for pasted URLs. The summary says how many leads were added, how many were duplicates, and how many were skipped (no or invalid LinkedIn URL). An uploaded lead starts with its drafts `pending` (§9).
 - If the profile fetch shows that a lead's `provider_id` already belongs to another lead (the same person pasted under a different URL), the new lead is set to `failed` with reason `duplicate_person`.
 - **Start** and **Pause** control all sending. Each button asks for the state it names; neither is a toggle. Start is blocked until all four templates are saved, valid, and no longer the shipped placeholder drafts.
 
@@ -62,8 +66,9 @@ The LinkedIn account is connected manually in the Unipile dashboard. There is no
 1. **Profile fetch** — `GET /api/v1/users/{slug}?account_id=…&linkedin_sections=experience_preview`. Store `provider_id` and variable values.
    - If `network_distance` is `FIRST_DEGREE`: status `already_connected`, skip to step 3 (first message due now).
 2. **Invite** — `POST /api/v1/users/invite` with the rendered invite note (≤ 300 characters). Status `invite_sent`. Store `invitation_id`.
+   - An uploaded founder (an AI lead) is sent its approved invite-note draft as written, with no template rendering; it is checked again against the 300-character limit right before the send. Its drafts must still be approved, with the same note, after the profile fetch, or no invite goes out.
 3. **Acceptance** — when detected (see §7), status `accepted`, first message scheduled at a random delay of 1–3 hours.
-4. **First message** — `POST /api/v1/chats` (new chat with `attendees_ids=[provider_id]`) or `POST /api/v1/chats/{chat_id}/messages` if a chat already exists. Status `messaged`.
+4. **First message** — `POST /api/v1/chats` (new chat with `attendees_ids=[provider_id]`) or `POST /api/v1/chats/{chat_id}/messages` if a chat already exists. Status `messaged`. An AI lead is sent its approved first-message draft, and the "never twice" check below compares the chat against that text.
 5. **Follow-up 1** — 2 calendar days after the previous message with no reply. Status `followup_1`.
 6. **Follow-up 2** — 3 calendar days after follow-up 1 with no reply. Status `followup_2`.
 7. **End** — 3 calendar days after follow-up 2 with no reply. Status `no_response`. (The end delay is editable like the others.)
@@ -141,6 +146,15 @@ These defaults stay under the limits Unipile documents for paid accounts (80–1
 - Right after a lead's profile fetch, before the invite, all four templates are rendered for that lead. A missing variable (`missing_variable: …`) or a rendered invite note over 300 characters (`note_too_long`) sets the lead to `failed` before anything is sent.
 - Settings shows a live preview of each template rendered against one real lead, and a character counter for the invite note (limit 300).
 
+### AI drafts for uploaded founders
+
+- An uploaded founder gets two drafts written by OpenAI from the owner's "About me" (Settings) and the lead's context: the invite note (at most 300 characters, 280 asked for) and the first message. For that lead they replace the invite-note and first-message templates; follow-ups 1 and 2 stay on the templates. A pasted lead (draft status `none`) uses the four templates as before, so all four are still required to Start.
+- Draft statuses: `none` (pasted lead), `pending`, `generating`, `ready` (written, not yet approved), `approved`, `failed` (with a short reason such as `rate_limited`, `timeout` or `openai_error: 503`).
+- **Only approved drafts are sent.** A queued AI lead is invited only once its drafts are `approved`; a `pending`, `generating`, `ready` or `failed` lead waits in the queue without failing. A draft is approved by the owner's **Approve** (one row, or all ready drafts at once) or by saving an edit. Regenerating sends it back to `pending`, so a new draft always needs a new approval.
+- Drafts are written only when the owner presses **Generate drafts** on the dashboard (§11), never by the tick and never at send time. Generation does not depend on `DRY_RUN`: it never touches LinkedIn.
+- The note can be edited or regenerated while the lead is `queued`; the first message can be edited until it is sent (`queued`, `invite_sent`, `accepted`, `already_connected`). Empty texts, a note over 300 characters, and any text with `{{` are refused.
+- The pre-invite template check above covers, for an AI lead, only follow-ups 1 and 2; its drafts are checked instead (`draft_not_approved`, `missing_draft`, §10).
+
 ## 10. Error handling
 
 | Unipile error | Action |
@@ -152,6 +166,8 @@ These defaults stay under the limits Unipile documents for paid accounts (80–1
 | `errors/cannot_invite_attendee`, `invalid_recipient`, `blocked_recipient`, `user_unreachable`, `no_connection_with_recipient`, profile 404 | Status `failed` with the reason. |
 | HTTP 401 or 403, or an account-level error (disconnected account, expired credentials, missing subscription) | Auto-pause at once with the reason. Lead unchanged. |
 | Any other error | Retry once on the next tick, then `failed`. |
+
+An AI lead (§9) whose text cannot be sent is set to `failed` before anything is sent, and never falls back to a template: `draft_not_approved` when its drafts are no longer approved at send time, `missing_draft` when an approved draft is empty.
 | 5 failed actions in a row, with no successful send in between | Auto-pause all sending and show a banner on the dashboard. |
 | 3 limit, 5xx or network errors in a row, with no successful send in between | Auto-pause all sending and show a banner on the dashboard. |
 
@@ -160,13 +176,18 @@ These defaults stay under the limits Unipile documents for paid accounts (80–1
 - Counters by status at the top; pause/limit banner when relevant. A banner always says whether the app is in dry run or live.
 - One table: name, headline, current role (position and company), URL, status, last action + date, next action + due date. Filter by status. The role line is where the owner checks, before going live, that company and position were read correctly.
 - Per-row actions: pause, retry (failed only; the lead goes back to the status it failed in), remove (deletes the lead but keeps its events, so caps stay correct; the person can be pasted again).
-- Settings page: templates with preview, delays, caps, active window.
+- **Upload founders** form next to the URL textarea (§5).
+- **AI drafts panel**, above the lead table once at least one lead has drafts: the counts (pending, generating, ready to approve, approved, failed), **Generate drafts**, **Stop**, **Approve all ready drafts** (with a confirmation that gives the count) and **Retry failed** (every failed draft back to `pending`). Generate drafts runs four workers in the browser, each calling `POST /api/drafts/generate` for one lead after another until none is left; the progress line updates after each lead. The tab must stay open; pressing the button again continues where it stopped. Stop takes no new lead and lets the generations in flight finish. Generation is blocked, before any lead is taken, while `OPENAI_API_KEY` or "About me" is missing, and the panel says which. The panel warns that approved drafts are sent as soon as the app is running.
+- A **Draft** column in the lead table: the draft status (`—` for a pasted lead), the reason of a failed draft with **Regenerate**, and the start of a ready note. **Review** opens both drafts under the row, with a live `N/300` counter on the note, **Save** (approves the edit), **Approve** (ready drafts only, and only the note shown: a draft rewritten since must be reviewed again) and **Regenerate**.
+- Settings page: templates with preview, delays, caps, active window, and "About me", the owner's pitch the AI writes from.
 - Event log of the last 50 events: each failed action with its reason, each webhook with its outcome, each send with its text.
 - No reply notifications in v1; the "Replied" filter is the inbox.
 
 ## 12. Statuses
 
 `queued`, `invite_sent`, `already_connected`, `accepted`, `messaged`, `followup_1`, `followup_2`, `replied`, `no_response`, `invite_expired`, `failed`
+
+Failure reasons that come from the AI drafts (§10): `draft_not_approved`, `missing_draft`. Draft statuses are separate from lead statuses (§9): `none`, `pending`, `generating`, `ready`, `approved`, `failed`.
 
 ## 13. Safety and reliability
 
@@ -178,6 +199,7 @@ These defaults stay under the limits Unipile documents for paid accounts (80–1
 ## 14. Cost
 
 - Unipile: €49/month (covers up to 10 accounts), after a 7-day free trial.
+- OpenAI (AI drafts only): pay per use. Writing the drafts of about 260 founders costs roughly $30 to $60 with `gpt-6.2-astra`; each regeneration costs one more.
 - Vercel Hobby and cron-job.org: free. Vercel's Hobby plan is for personal, non-commercial use; commercial use needs the Pro plan.
 - Neon free tier: free only while cron-job.org calls the tick during the active hours alone. A tick every 5 minutes around the clock keeps the database awake and uses about 180 compute-hours a month against a free allowance of 100; Neon then suspends the database until the next month.
 
