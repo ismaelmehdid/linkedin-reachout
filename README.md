@@ -111,11 +111,11 @@ Do these steps in order.
 6. **cron-job.org.** Create a job:
    - `GET https://<app>.vercel.app/api/tick`
    - Header `Authorization: Bearer <CRON_SECRET>`. No other form is accepted.
-   - Schedule it every minute, only inside the active hours, on the active days. For the default window: every minute, Monday to Friday, from 08:00 to 19:59, time zone `Europe/Paris`. If you change the active window in Settings, change the job to match.
+   - Schedule it every minute, only inside the active hours, on the active days. For the default window: every minute, Monday to Saturday, from 08:00 to 21:59, time zone `America/Los_Angeles`. As a crontab expression: `* 8-21 * * 1-6`. If you change the active window in Settings, change the job to match.
    - Every minute, because each send is planned to the second (see [Spacing](#spacing)). A tick waits for a planned moment that is up to 90 seconds away, so a tick every minute reaches each planned moment. With a tick every 5 minutes, a send can be up to about 3.5 minutes late, and then also gets the random wait of 0 to 90 seconds.
    - Turn on the failure notifications of the job. `/api/tick` answers 202 when the tick is accepted, `500 {"error":"database_unreachable"}` when it cannot read the database, and `500 {"error":"misconfigured"}` when a variable is wrong. The failure e-mails are the monitoring of this app.
 
-   Do not run the job around the clock. Every tick reads the database, even when the app is paused or outside the active window. A tick every minute, day and night, keeps the Neon database awake and uses about 180 compute-hours a month. The free allowance is 100. Neon then suspends the database until the next month: `/api/tick` and the webhooks answer 500, and replies are no longer recorded. Outside the active window a tick does nothing but mark finished sequences as `no_response`, so nothing is lost by not running it. Webhooks still wake the database when they arrive.
+   Do not run the job around the clock. Every tick reads the database, even when the app is paused or outside the active window. A tick every minute, day and night, keeps the Neon database awake and uses about 180 compute-hours a month. The free allowance is 100. With the default window the job keeps the database awake about 365 hours a month, which is about 90 compute-hours: close to the allowance, and webhooks and dashboard visits outside the window add to it. To keep a margin, start the job an hour later or drop a day. When the allowance is used up, Neon suspends the database until the next month: `/api/tick` and the webhooks answer 500, and replies are no longer recorded. Outside the active window a tick does nothing but mark finished sequences as `no_response`, so nothing is lost by not running it. Webhooks still wake the database when they arrive.
 
 ## First run in dry run
 
@@ -128,7 +128,7 @@ Do this rehearsal on the deployed app, against the real Neon database, and not o
 
    Accepted links look like `linkedin.com/in/<slug>`. They can have `www.` or a country subdomain, a trailing slash, a query string, or a two-letter language suffix such as `/in/<slug>/en`. Other links (Sales Navigator, company pages) are rejected with an error on that line.
 3. Press Start.
-4. Wait for a few ticks. Ticks act only inside the active window (by default Mon–Fri, 08:30–19:00, `Europe/Paris`; editable in Settings), so a dry run started in the evening or at a weekend shows nothing until the next window opens. Each tick takes at most one action, and with the default spacing the pause between two sends on a light day is about 20 to 70 minutes (see [Spacing](#spacing)), so 3 leads take an hour or more. Then check two things:
+4. Wait for a few ticks. Ticks act only inside the active window (by default Mon–Sat, 08:30–22:00, `America/Los_Angeles`; editable in Settings), so a dry run started in the evening or at a weekend shows nothing until the next window opens. Each tick takes at most one action, and with the default spacing the pause between two sends on a light day is about 20 to 70 minutes (see [Spacing](#spacing)), so 3 leads take an hour or more. Then check two things:
    - The event log shows `would send: …` lines.
    - In the lead table on the dashboard, under each name, the line with position and company looks right. This also confirms the `work_experience` field mapping against a real Unipile response.
 5. Remove the leads that were processed during the dry run. Otherwise they would never be contacted for real: a lead that got a dry-run message fails at its next step once `DRY_RUN` is off, and a lead that got a dry-run invite sits in `invite_sent` until it expires after 21 days, without ever being invited. Removing a lead keeps its events, so the dry run's invites and messages still count against today's caps and, for invites, the rolling 7 days.
@@ -176,5 +176,5 @@ Spacing lowers how regular the account looks; it does not make automation invisi
 - Unipile: 49 EUR per month, which covers up to 10 accounts, after a 7-day free trial.
 - OpenAI, for the AI drafts only: pay per use. Writing the drafts of about 260 founders costs roughly 30 to 60 USD with `gpt-6.2-astra`. Each regeneration and each retry costs one more draft.
 - Vercel Hobby and cron-job.org: free.
-- Neon free tier: free only while cron-job.org calls the tick during the active hours alone. Called around the clock, the tick uses about 180 compute-hours a month against a free allowance of 100, and Neon then suspends the database until the next month.
+- Neon free tier: free, with a small margin, only while cron-job.org calls the tick during the active hours alone (about 90 of the 100 free compute-hours a month with the default window). Called around the clock, the tick uses about 180 compute-hours a month against a free allowance of 100, and Neon then suspends the database until the next month.
 - Vercel's Hobby plan is for personal, non-commercial use. Commercial use needs the Pro plan.

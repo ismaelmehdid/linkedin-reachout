@@ -9,7 +9,13 @@ import { createDryRunClient } from '@/lib/unipile/dry-run';
 import { createTestDb } from './db';
 import { createFakeUnipile, type FakeUnipile } from './fake-unipile';
 
-/** A Tuesday, 10:00 in Paris: inside the default active window. */
+/**
+ * The active window of the engine tests: Paris working hours, Monday to Friday. It is fixed here, apart
+ * from the app's default, so that changing the default hours changes no test.
+ */
+export const TEST_WINDOW: Settings['window'] = { days: [1, 2, 3, 4, 5], start: '08:30', end: '19:00', timezone: 'Europe/Paris' };
+
+/** A Tuesday, 10:00 in Paris: inside TEST_WINDOW. */
 export const NOW = new Date('2026-11-17T09:00:00Z');
 
 /** One hour before NOW, so a seeded lead is due. */
@@ -36,7 +42,7 @@ export type TestEngine = {
 const NO_PACING: Settings['pacing'] = { minGapMinutes: 0, maxGapMinutes: 0, dayStartJitterMinutes: 0, followupJitterMinutes: 0 };
 
 /**
- * A fresh database with saved settings (test templates over the defaults, spacing off) and the engine running,
+ * A fresh database with saved settings (test templates and TEST_WINDOW over the defaults, spacing off) and the engine running,
  * a fake Unipile, a settable clock (NOW by default) and a fixed random value (0.5 by default).
  */
 export async function createTestEngine(
@@ -52,7 +58,12 @@ export async function createTestEngine(
   const fake = createFakeUnipile();
 
   // A deep copy, so a callback that edits it in place cannot change DEFAULT_SETTINGS.
-  const base: Settings = { ...structuredClone(DEFAULT_SETTINGS), templates: { ...TEST_TEMPLATES, ...opts.templates }, pacing: { ...NO_PACING } };
+  const base: Settings = {
+    ...structuredClone(DEFAULT_SETTINGS),
+    templates: { ...TEST_TEMPLATES, ...opts.templates },
+    pacing: { ...NO_PACING },
+    window: structuredClone(TEST_WINDOW),
+  };
   const saved = await saveSettings(db, opts.settings ? opts.settings(base) : base);
   if (!saved.ok) throw new Error(`Invalid test settings: ${saved.errors.join('; ')}`);
   await setRunning(db, true);

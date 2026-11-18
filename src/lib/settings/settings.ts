@@ -66,7 +66,8 @@ export const DEFAULT_SETTINGS: Settings = {
     dayStartJitterMinutes: 45,
     followupJitterMinutes: 180,
   },
-  window: { days: [1, 2, 3, 4, 5], start: '08:30', end: '19:00', timezone: 'Europe/Paris' },
+  // The owner's hours: Monday to Saturday, San Francisco time. The cron-job.org job must cover the same hours.
+  window: { days: [1, 2, 3, 4, 5, 6], start: '08:30', end: '22:00', timezone: 'America/Los_Angeles' },
 };
 
 const count = z.number().int().min(0);

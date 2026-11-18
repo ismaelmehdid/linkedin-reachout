@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '@/db/types';
+import { isInActiveWindow } from '@/lib/schedule/window';
 import { createTestDb } from '@/test-utils/db';
 import { getSettings, saveSettings } from './repo';
 import { DEFAULT_SETTINGS, type Settings } from './settings';
@@ -16,6 +17,18 @@ describe('settings repo', () => {
   });
 
   it('returns the defaults when nothing is saved', async () => expect(await getSettings(db)).toEqual(DEFAULT_SETTINGS));
+
+  // The owner works on San Francisco time: Monday to Saturday, 08:30 to 22:00. In November that is UTC-8.
+  it.each([
+    ['Monday at 08:30', '2026-11-16T16:30:00Z', true],
+    ['Monday at 08:29', '2026-11-16T16:29:00Z', false],
+    ['Saturday at 21:59', '2026-11-22T05:59:00Z', true],
+    ['Saturday at 22:00', '2026-11-22T06:00:00Z', false],
+    ['Sunday at noon', '2026-11-22T20:00:00Z', false],
+    ['Tuesday at 01:00 (10:00 in Paris)', '2026-11-17T09:00:00Z', false],
+  ])('before anything is saved, the active window at %s San Francisco time (%s) is open: %s', async (_moment, iso, expected) => {
+    expect(isInActiveWindow(new Date(iso), (await getSettings(db)).window)).toBe(expected);
+  });
 
   it('saves, reloads and marks templates as saved', async () => {
     const result = await saveSettings(db, { ...DEFAULT_SETTINGS, caps: { ...DEFAULT_SETTINGS.caps, invitesPerDay: 20 } });

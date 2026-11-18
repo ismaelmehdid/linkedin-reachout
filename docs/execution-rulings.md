@@ -132,6 +132,10 @@ Two things went wrong on the day of the first deployment. The first real `drizzl
 76. **Two production builds at the same moment could both try the same migration.** Nothing locks against it. For a migration written by `drizzle-kit generate`, the second build then fails and changes nothing: its statements collide with what the first build created, and its transaction is undone. A hand-written migration that only changes rows would run twice. If wrong: redeploy the build that failed, and never push twice in a row while a hand-written data migration is pending.
 77. **The first build of a new project fails until Neon is added**, with a message that says so. Before, that build passed and the app then failed at login. If wrong: nothing; the guide says it.
 
+## Active hours (changed on 2026-11-18, branch `feat/sf-active-window`)
+
+78. **The default active window is Monday to Saturday, 08:30 to 22:00, `America/Los_Angeles`.** The owner works on San Francisco time and allowed sends until 22:00 and on Saturdays. It was Monday to Friday, 08:30 to 19:00, `Europe/Paris`. The default applies only while no settings are saved; a window saved in Settings is not changed. The guide's job at cron-job.org covers the same hours (`* 8-21 * * 1-6`). Called every minute in that window, the tick keeps the database awake about 365 hours a month, about 90 of Neon's 100 free compute-hours. The engine tests keep their own window (`TEST_WINDOW`, Paris working hours), so the default can change without them. If wrong: change the window in Settings and the job at cron-job.org.
+
 ## Left open, for the owner
 
 The final reviewer approved the branch for merge and listed these Minor points. None was fixed; there was one fix wave by design.
@@ -151,5 +155,5 @@ The final reviewer approved the branch for merge and listed these Minor points. 
 ## Not decided here, because only the owner can
 
 - **Vercel plan.** Hobby is for personal, non-commercial use. Commercial outreach needs Pro.
-- **Timezone.** The default active hours are Monday to Friday, 08:30 to 19:00, `Europe/Paris`. Set them in Settings to where the leads are.
+- **Timezone.** Decided by the owner on 2026-11-18: see ruling 78.
 - **First live run.** Nothing in this branch has met a real Unipile response or the real Neon database. The guide's rehearsal, done once on the deployed app in dry run, is the first real test. Start the first live week with small caps, for example 5 invites a day.

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LeadStatus } from '@/db/schema';
 import { DEFAULT_SETTINGS } from '@/lib/settings/settings';
-import { NOW } from '@/test-utils/engine';
+import { NOW, TEST_WINDOW } from '@/test-utils/engine';
 import { MESSAGE_STEP_BY_STATUS, firstMessageDueAt, nextDueAfterSend, nextStep, statusAfterMessage } from './steps';
 
 describe('steps', () => {
@@ -22,8 +22,11 @@ describe('steps', () => {
     expect(nextDueAfterSend('followup_2', NOW, DEFAULT_SETTINGS)).toEqual(new Date('2026-11-20T09:00:00Z'));
   });
 
+  // Paris moves to summer time on 2027-03-28: the same local hour is one UTC hour earlier.
   it('keeps the local time across a time change', () =>
-    expect(nextDueAfterSend('messaged', new Date('2027-03-27T09:00:00Z'), DEFAULT_SETTINGS)).toEqual(new Date('2027-03-29T08:00:00Z')));
+    expect(nextDueAfterSend('messaged', new Date('2027-03-27T09:00:00Z'), { ...DEFAULT_SETTINGS, window: TEST_WINDOW })).toEqual(
+      new Date('2027-03-29T08:00:00Z'),
+    ));
 
   it('schedules the first message 60 to 180 minutes after acceptance', () => {
     expect(firstMessageDueAt(NOW, () => 0, DEFAULT_SETTINGS.delays)).toEqual(new Date('2026-11-17T10:00:00Z'));

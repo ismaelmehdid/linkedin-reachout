@@ -256,7 +256,7 @@ export default function SettingsForm({ settings, leads }: { settings: Settings; 
           <input type="time" name="windowEnd" defaultValue={settings.window.end} required className={INPUT_CLASS} />
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-sm">Timezone (for example Europe/Paris)</span>
+          <span className="text-sm">Timezone (for example America/Los_Angeles)</span>
           <input type="text" name="timezone" defaultValue={settings.window.timezone} required className={INPUT_CLASS} />
         </label>
       </section>

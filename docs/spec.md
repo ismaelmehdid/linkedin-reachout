@@ -113,7 +113,7 @@ Webhooks are registered once in the Unipile dashboard with the header `Unipile-A
 | Follow-up due time | the delay in days, plus a random 0 to 3 hours |
 | Pause between two invite withdrawals | random, 10 to 30 minutes |
 | Random wait when a send is already late | 0–90 s |
-| Active window | Mon–Fri, 08:30–19:00, `Europe/Paris` |
+| Active window | Mon–Sat, 08:30–22:00, `America/Los_Angeles` |
 | Warm-up ramp | none |
 
 ### Spacing
@@ -202,7 +202,7 @@ Failure reasons that come from the AI drafts (§10): `draft_not_approved`, `miss
 - Unipile: €49/month (covers up to 10 accounts), after a 7-day free trial.
 - OpenAI (AI drafts only): pay per use. Writing the drafts of about 260 founders costs roughly $30 to $60 with `gpt-6.2-astra`; each regeneration costs one more.
 - Vercel Hobby and cron-job.org: free. Vercel's Hobby plan is for personal, non-commercial use; commercial use needs the Pro plan.
-- Neon free tier: free only while cron-job.org calls the tick during the active hours alone. A tick every 5 minutes around the clock keeps the database awake and uses about 180 compute-hours a month against a free allowance of 100; Neon then suspends the database until the next month.
+- Neon free tier: free, with a small margin, only while cron-job.org calls the tick during the active hours alone (about 90 of the 100 free compute-hours a month with the default window). Called around the clock, the tick keeps the database awake and uses about 180 compute-hours a month; Neon then suspends the database until the next month.
 
 ## 15. References
 
