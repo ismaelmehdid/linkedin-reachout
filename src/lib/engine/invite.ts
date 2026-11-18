@@ -8,7 +8,7 @@ import type { UnipileProfile } from '@/lib/unipile/types';
 import type { EngineDeps } from './deps';
 import { logEvent } from './events';
 import { failLead, handleActionError, updateLeadIfStatus, type ActionOutcome } from './failure';
-import { checkLeadTemplates, renderForLead } from './lead-templates';
+import { checkLeadTemplates, leadInviteNote } from './lead-templates';
 import { resetErrorStreak } from './state';
 
 function profileFields(profile: UnipileProfile) {
@@ -34,7 +34,7 @@ async function belongsToAnotherLead(db: Db, providerId: string, leadId: number):
   return other !== undefined;
 }
 
-/** Already a first-degree connection: no invite, the first message is due now. */
+/** Already a first-degree connection: no invite, the first message is due now. An AI lead's invite note is not checked. */
 async function markAlreadyConnected(deps: EngineDeps, lead: Lead, settings: Settings, now: Date): Promise<ActionOutcome> {
   const check = checkLeadTemplates(lead, settings, { includeInvite: false });
   if (!check.ok) {
@@ -71,8 +71,9 @@ function markInviteSent(db: Db, lead: Lead, invitationId: string | null, now: Da
 }
 
 /**
- * Fetches the profile, checks every template against it, then sends the invite with its note.
- * All four templates are checked first, so a value a later message needs fails the lead before anyone is contacted.
+ * Fetches the profile, checks every text against it, then sends the invite with its note.
+ * All four texts are checked first, so a value a later message needs fails the lead before anyone is contacted.
+ * An AI lead sends its approved note as written; its missing draft fails it and never falls back to a template.
  */
 export async function runInviteAction(deps: EngineDeps, lead: Lead, settings: Settings): Promise<ActionOutcome> {
   const { db } = deps;
@@ -99,7 +100,7 @@ export async function runInviteAction(deps: EngineDeps, lead: Lead, settings: Se
   if (profile.networkDistance === 'FIRST_DEGREE') return markAlreadyConnected(deps, withProfile, settings, now);
 
   const check = checkLeadTemplates(withProfile, settings, { includeInvite: true });
-  const note = renderForLead(settings.templates.inviteNote, withProfile);
+  const note = leadInviteNote(withProfile, settings);
   if (!check.ok || !note.ok) {
     // The check covers the note too; `note.ok` is only tested here to narrow its type.
     await failLead(db, withProfile, check.ok ? 'invalid_template' : check.reason, now);

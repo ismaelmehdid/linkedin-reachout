@@ -203,4 +203,62 @@ describe('invite action', () => {
     expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'queued', retryCount: 1, updatedAt: NOW });
     expect((await listEvents(e.db)).map((x) => [x.type, x.payload])).toEqual([['action_failed', { kind: 'invite', status: null, type: null, message: 'bug' }]]);
   });
+
+  describe('an AI lead, whose drafts are approved', () => {
+    const NOTE = 'Jane, your Acme job post for a Rust engineer caught my eye. Open to a chat?';
+    const seedAi = (patch: Partial<Lead> = {}) =>
+      seedLead(e.db, { slug: 'jane-ai', draftStatus: 'approved', inviteNoteDraft: NOTE, firstMessageDraft: 'Thanks for connecting, Jane', ...patch });
+    const runAi = async (patch: Partial<Lead> = {}, templates?: Parameters<typeof createTestEngine>[0]) => {
+      if (templates) e = await createTestEngine(templates);
+      // No position and no headline: templates that use them cannot render for this lead.
+      e.fake.profiles.set('jane-ai', makeProfile({ currentPosition: null, headline: null }));
+      lead = await seedAi(patch);
+      return runInviteAction(e.deps, lead, e.settings);
+    };
+
+    it('sends the approved note as written', async () => {
+      expect((await runAi()).result).toBe('invited');
+      expect(e.fake.calls).toEqual([{ method: 'getProfile', args: ['jane-ai'] }, { method: 'sendInvitation', args: ['ACoJane', NOTE] }]);
+      expect((await listEvents(e.db)).at(-1)).toMatchObject({ type: 'invite_sent', leadId: lead.id, payload: { text: NOTE, dryRun: false } });
+      expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'invite_sent', inviteNoteDraft: NOTE, updatedAt: NOW });
+    });
+    it('is not failed by invite-note and first-message templates it does not use', async () => {
+      expect((await runAi({}, { templates: { inviteNote: 'About {{position}}', firstMessage: '{{headline}}' } })).result).toBe('invited');
+      expect(e.fake.calls.at(-1)).toEqual({ method: 'sendInvitation', args: ['ACoJane', NOTE] });
+    });
+    it.each([
+      ['an empty note', { inviteNoteDraft: null }, 'missing_draft'],
+      ['a blank note', { inviteNoteDraft: '   ' }, 'missing_draft'],
+      ['a blank first message', { firstMessageDraft: '' }, 'missing_draft'],
+      ['a note with a raw tag', { inviteNoteDraft: 'Hi {{first_name}}' }, 'invalid_template'],
+      ['a note over 300 characters', { inviteNoteDraft: 'x'.repeat(320) }, 'note_too_long: 320/300'],
+    ] as const)('fails the lead and sends nothing on %s', async (_label, patch, reason) => {
+      expect((await runAi(patch)).result).toBe('failed');
+      expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'failed', failureReason: reason, failedFromStatus: 'queued', updatedAt: NOW });
+      expect(methods()).toEqual(['getProfile']);
+      expect((await listEvents(e.db)).map((x) => x.type)).toEqual(['profile_view']);
+    });
+    it('still fails before inviting when a follow-up template misses a variable', async () => {
+      e = await createTestEngine({ templates: { followup1: 'About {{position}}' } });
+      e.fake.profiles.set('jane-ai', makeProfile({ currentPosition: null }));
+      lead = await seedAi();
+      expect((await runInviteAction(e.deps, lead, e.settings)).result).toBe('failed');
+      expect((await getLead(e.db, lead.id)).failureReason).toBe('missing_variable: position');
+      expect(methods()).toEqual(['getProfile']);
+    });
+    it('goes to already_connected without checking the invite-note and first-message templates', async () => {
+      e = await createTestEngine({ templates: { inviteNote: 'About {{position}}', firstMessage: '{{headline}}' } });
+      e.fake.profiles.set('jane-ai', makeProfile({ networkDistance: 'FIRST_DEGREE', currentPosition: null, headline: null }));
+      lead = await seedAi({ inviteNoteDraft: null });
+      expect((await runInviteAction(e.deps, lead, e.settings)).result).toBe('already_connected');
+      expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'already_connected', nextActionAt: NOW, updatedAt: NOW });
+      expect(methods()).toEqual(['getProfile']);
+    });
+    it('fails an already connected lead whose first message draft is blank', async () => {
+      e.fake.profiles.set('jane-ai', makeProfile({ networkDistance: 'FIRST_DEGREE' }));
+      lead = await seedAi({ firstMessageDraft: ' ' });
+      expect((await runInviteAction(e.deps, lead, e.settings)).result).toBe('failed');
+      expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'failed', failureReason: 'missing_draft' });
+    });
+  });
 });

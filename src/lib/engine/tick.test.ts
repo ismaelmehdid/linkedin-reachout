@@ -60,6 +60,22 @@ describe('tick', () => {
     await updateAppState(e.db, { invitesPausedUntil: null }); await e.db.update(leads).set({ paused: true });
     expect((await runTick(e.deps)).action).toBeNull();
   });
+  it.each(['pending', 'generating', 'ready', 'failed'] as const)('leaves a queued lead whose drafts are %s waiting, and invites an approved one', async (draftStatus) => {
+    const waiting = await seedLead(e.db, { slug: 'waiting', draftStatus, inviteNoteDraft: 'Hi there', firstMessageDraft: 'Thanks' });
+    expect((await runTick(e.deps)).action).toBeNull();
+    expect(methods()).toEqual([]);
+    const approved = await seedLead(e.db, { slug: 'jane-doe', draftStatus: 'approved', inviteNoteDraft: 'Hi Jane, written for you', firstMessageDraft: 'Thanks Jane' });
+    expect((await runTick(e.deps)).action).toEqual({ leadId: approved.id, result: 'invited' });
+    expect(e.fake.calls.at(-1)).toEqual({ method: 'sendInvitation', args: ['ACoJane', 'Hi Jane, written for you'] });
+    expect(await getLead(e.db, waiting.id)).toMatchObject({ status: 'queued', draftStatus, failureReason: null, nextActionAt: waiting.nextActionAt });
+  });
+  it('sends no invite when the drafts were taken back from approval during the random wait', async () => {
+    const lead = await seedLead(e.db, { slug: 'jane-doe', draftStatus: 'approved', inviteNoteDraft: 'Hi Jane', firstMessageDraft: 'Thanks Jane' });
+    e.deps.sleep = async () => { await e.db.update(leads).set({ draftStatus: 'ready' }).where(eq(leads.id, lead.id)); };
+    expect((await runTick(e.deps)).action).toEqual({ leadId: lead.id, result: 'superseded' });
+    expect(methods()).toEqual([]);
+    expect((await getLead(e.db, lead.id)).status).toBe('queued');
+  });
   it('sends nothing when the lead replied during the random wait', async () => {
     const lead = await acceptedDue();
     e.deps.sleep = async () => { await e.db.update(leads).set({ status: 'replied' }).where(eq(leads.id, lead.id)); };
@@ -279,6 +295,13 @@ describe('tick with spacing on', () => {
     // 9 hours are left (the window closes at 18:00Z); 35 invites are planned (the daily cap), no other message is due.
     const expected = Math.round(((9 * 60 * 60_000) / 35) * (0.5 + 0.5));
     expect((await getAppState(e.db)).nextOutreachAt).toEqual(at(expected));
+  });
+  it('plans no invite for queued leads whose drafts are not approved', async () => {
+    await updateAppState(e.db, { nextOutreachAt: NOW }); await acceptedDue();
+    for (let i = 0; i < 36; i++) await seedLead(e.db, { slug: `drafting-${i}`, draftStatus: (['pending', 'generating', 'ready', 'failed'] as const)[i % 4] });
+    await runTick(e.deps);
+    // Nothing else is planned today, so the pause is the longest average.
+    expect((await getAppState(e.db)).nextOutreachAt).toEqual(at(45 * 60_000));
   });
   it('keeps the longest average pause when little is planned', async () => {
     await updateAppState(e.db, { nextOutreachAt: NOW }); await acceptedDue();

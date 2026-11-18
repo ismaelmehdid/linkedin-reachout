@@ -1,5 +1,5 @@
 import { and, eq, inArray, lte, sql, type SQL } from 'drizzle-orm';
-import { leads, type Lead, type LeadStatus } from '@/db/schema';
+import { leads, type DraftStatus, type Lead, type LeadStatus } from '@/db/schema';
 import type { Db } from '@/db/types';
 import { isInActiveWindow, windowBounds } from '@/lib/schedule/window';
 import { getSettings } from '@/lib/settings/repo';
@@ -65,14 +65,19 @@ type WindowBounds = { start: Date; end: Date };
 
 const isPausedAfter = (until: Date | null, now: Date) => until !== null && until > now;
 
+/** A queued lead is invited only with no drafts (a pasted lead) or approved ones: any other lead waits for its drafts. */
+const INVITABLE_DRAFT_STATUSES = ['none', 'approved'] as const satisfies readonly DraftStatus[];
+
+const isInvitable = inArray(leads.draftStatus, [...INVITABLE_DRAFT_STATUSES]);
+
 const countWhere = (condition: SQL | undefined) => sql<number>`count(*) filter (where ${condition})`.mapWith(Number);
 
-/** One lead in one of `statuses`, not paused and due, picked at random among them (spec §8). */
-async function pickDueLead(db: Db, statuses: LeadStatus[], now: Date): Promise<Lead | undefined> {
+/** One lead in one of `statuses`, not paused, due and matching `condition`, picked at random among them (spec §8). */
+async function pickDueLead(db: Db, statuses: LeadStatus[], now: Date, condition?: SQL): Promise<Lead | undefined> {
   const [lead] = await db
     .select()
     .from(leads)
-    .where(and(inArray(leads.status, statuses), eq(leads.paused, false), lte(leads.nextActionAt, now)))
+    .where(and(inArray(leads.status, statuses), eq(leads.paused, false), lte(leads.nextActionAt, now), condition))
     .orderBy(sql`random()`)
     .limit(1);
   return lead;
@@ -86,7 +91,7 @@ async function pickAction(db: Db, state: AppState, remaining: Remaining, now: Da
     if (lead) return { kind: 'message', lead, step: MESSAGE_STEP_BY_STATUS[lead.status as MessageStatus] };
   }
   if (remaining.invites > 0 && remaining.profileViews > 0 && !isPausedAfter(state.invitesPausedUntil, now)) {
-    const lead = await pickDueLead(db, ['queued'], now);
+    const lead = await pickDueLead(db, ['queued'], now, isInvitable);
     if (lead) return { kind: 'invite', lead };
   }
   return null;
@@ -94,12 +99,14 @@ async function pickAction(db: Db, state: AppState, remaining: Remaining, now: Da
 
 /**
  * The picked lead as it is after the random wait, or null when it no longer qualifies: deleted, paused,
- * moved to another status (a reply, or a manual message before the first message), or no longer due
- * at `pickedAt` (a manual message after the first message moves `nextActionAt` and keeps the status).
+ * moved to another status (a reply, or a manual message before the first message), no longer due
+ * at `pickedAt` (a manual message after the first message moves `nextActionAt` and keeps the status),
+ * or, for an invite, drafts that are no longer approved.
  */
 async function rereadPickedLead(db: Db, picked: Lead, pickedAt: Date): Promise<Lead | null> {
   const [lead] = await db.select().from(leads).where(eq(leads.id, picked.id));
   if (!lead || lead.paused || lead.status !== picked.status) return null;
+  if (lead.status === 'queued' && !(INVITABLE_DRAFT_STATUSES as readonly DraftStatus[]).includes(lead.draftStatus)) return null;
   if (lead.nextActionAt === null || lead.nextActionAt > pickedAt) return null;
   return lead;
 }
@@ -118,14 +125,14 @@ async function expireOneInviteWhenSpaced(deps: EngineDeps, settings: Settings, n
 }
 
 /**
- * The sends still planned for today: the invites that the caps and the due `queued` leads allow, plus the
+ * The sends still planned for today: the invites that the caps and the due invitable `queued` leads allow, plus the
  * messages that the cap and the leads due before the window closes allow. Paused leads are not counted,
  * and neither is a type of send that is paused.
  */
 async function countPlannedSends(db: Db, state: AppState, remaining: Remaining, now: Date, windowEnd: Date): Promise<number> {
   const [due] = await db
     .select({
-      invites: countWhere(and(eq(leads.status, 'queued'), lte(leads.nextActionAt, now))),
+      invites: countWhere(and(eq(leads.status, 'queued'), lte(leads.nextActionAt, now), isInvitable)),
       messages: countWhere(and(inArray(leads.status, MESSAGE_STATUSES), lte(leads.nextActionAt, windowEnd))),
     })
     .from(leads)
