@@ -97,7 +97,7 @@ Do these steps in order.
    - `GET https://<app>.vercel.app/api/tick`
    - Header `Authorization: Bearer <CRON_SECRET>`. No other form is accepted.
    - Schedule it every minute, only inside the active hours, on the active days. For the default window: every minute, Monday to Friday, from 08:00 to 19:59, time zone `Europe/Paris`. If you change the active window in Settings, change the job to match.
-   - Every minute, because each send is planned to the second (see [Spacing](#spacing)). A tick that starts shortly before that second waits for it, so a tick every minute hits it. A tick every 5 minutes sends up to about 3 minutes late.
+   - Every minute, because each send is planned to the second (see [Spacing](#spacing)). A tick waits for a planned moment that is up to 90 seconds away, so a tick every minute reaches each planned moment. With a tick every 5 minutes, a send can be up to about 3.5 minutes late, and then also gets the random wait of 0 to 90 seconds.
    - Turn on the failure notifications of the job. `/api/tick` answers 202 when the tick is accepted, `500 {"error":"database_unreachable"}` when it cannot read the database, and `500 {"error":"misconfigured"}` when a variable is wrong. The failure e-mails are the monitoring of this app.
 
    Do not run the job around the clock. Every tick reads the database, even when the app is paused or outside the active window. A tick every minute, day and night, keeps the Neon database awake and uses about 180 compute-hours a month. The free allowance is 100. Neon then suspends the database until the next month: `/api/tick` and the webhooks answer 500, and replies are no longer recorded. Outside the active window a tick does nothing but mark finished sequences as `no_response`, so nothing is lost by not running it. Webhooks still wake the database when they arrive.
@@ -130,7 +130,7 @@ Sends do not follow a clock: one action every 5 minutes from the moment the wind
 - **First send of the day** (45 minutes). The first send waits for a random moment in this time after the active hours open. When that moment has already passed, for example when you press Start in the afternoon, the first send comes within two minutes.
 - **Follow-up time** (180 minutes). A follow-up is due after its delay in days plus a random part of this time, so it does not come at the same hour as the message before it.
 
-A longest pause of 0 turns off the pauses between sends and between withdrawals, and a first send or follow-up time of 0 turns that part off. Settings accepts at most 240 minutes for the pauses, 180 for the first send and 720 for the follow-up time. While the app runs, the dashboard shows when the next send may happen, under the usage line.
+A longest pause of 0 turns off the pauses between sends and between withdrawals, and a first send or follow-up time of 0 turns that part off. Settings accepts at most 240 minutes for the pauses, 180 for the first send and 720 for the follow-up time, and the first send time must be shorter than the active hours. When you shorten these values, a send already planned further ahead than the new values allow is brought forward to that distance on the next tick. While the app runs, the dashboard shows when the next send may happen, under the usage line.
 
 Spacing lowers how regular the account looks; it does not make automation invisible and it does not replace low volumes.
 

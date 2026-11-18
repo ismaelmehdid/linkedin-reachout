@@ -97,6 +97,15 @@ describe('validateSettings', () => {
     expect(validateSettings(withPacing({ minGapMinutes: 240, maxGapMinutes: 240, dayStartJitterMinutes: 180, followupJitterMinutes: 720 }))).toEqual([]);
     expect(validateSettings(withPacing({ minGapMinutes: 0, maxGapMinutes: 0, dayStartJitterMinutes: 0, followupJitterMinutes: 0 }))).toEqual([]);
   });
+  it('requires the first send of the day to come before the active hours end', () => {
+    const shortDay = (dayStartJitterMinutes: number): Settings => ({
+      ...DEFAULT_SETTINGS,
+      window: { ...DEFAULT_SETTINGS.window, start: '08:30', end: '09:00' },
+      pacing: { ...DEFAULT_SETTINGS.pacing, dayStartJitterMinutes },
+    });
+    expect(validateSettings(shortDay(30))).toEqual(['First send of the day: must be shorter than the active hours']);
+    expect(validateSettings(shortDay(29))).toEqual([]);
+  });
   it('throws on a spacing value that is not a whole number of 0 or more', () => {
     expect(() => parseSettings({ pacing: { maxGapMinutes: -1 } })).toThrow();
     expect(() => parseSettings({ pacing: { minGapMinutes: 2.5 } })).toThrow();

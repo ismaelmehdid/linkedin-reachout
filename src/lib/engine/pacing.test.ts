@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dayStartAt, pickGapMs, withdrawalGapMs, WITHDRAWAL_GAP_MAX_MINUTES, WITHDRAWAL_GAP_MIN_MINUTES } from './pacing';
+import { dayStartAt, longestPlanAheadMs, pickGapMs, withdrawalGapMs, WITHDRAWAL_GAP_MAX_MINUTES, WITHDRAWAL_GAP_MIN_MINUTES } from './pacing';
 
 const P = { minGapMinutes: 4, maxGapMinutes: 45, dayStartJitterMinutes: 45, followupJitterMinutes: 180 };
 const MIN = 60_000;
@@ -39,6 +39,15 @@ describe('pacing', () => {
     const opens = new Date('2026-11-17T07:30:00Z');
     expect(dayStartAt(opens, opens, P, () => 0)).toEqual(new Date('2026-11-17T07:30:00Z'));
     expect(dayStartAt(opens, new Date('2026-11-17T07:29:00Z'), P, () => 0.999)).toEqual(new Date(opens.getTime() + Math.round(0.999 * 45 * MIN)));
+  });
+  it('trusts a planned moment only as far ahead as the settings can plan one', () => {
+    expect(longestPlanAheadMs(P)).toBe(67.5 * MIN);
+    expect(longestPlanAheadMs({ ...P, maxGapMinutes: 20, dayStartJitterMinutes: 45 })).toBe(45 * MIN);
+    expect(longestPlanAheadMs({ minGapMinutes: 0, maxGapMinutes: 0, dayStartJitterMinutes: 0, followupJitterMinutes: 0 })).toBe(0);
+    // Never shorter than a pause or a first send that the same settings draw.
+    expect(pickGapMs({ timeLeftMs: 600 * MIN, planned: 1, pacing: P, random: () => 0.999 })).toBeLessThanOrEqual(longestPlanAheadMs(P));
+    const opens = new Date('2026-11-17T07:30:00Z');
+    expect(dayStartAt(opens, opens, P, () => 0.999).getTime() - opens.getTime()).toBeLessThanOrEqual(longestPlanAheadMs(P));
   });
   it('keeps every withdrawal pause inside its range', () => {
     expect(withdrawalGapMs(P, () => 0)).toBe(WITHDRAWAL_GAP_MIN_MINUTES * MIN);

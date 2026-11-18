@@ -158,6 +158,12 @@ function templateErrors(templates: Settings['templates']): string[] {
   return errors;
 }
 
+/** Minutes since local midnight of a valid `HH:MM` time. */
+function minutesOfDay(time: string): number {
+  const [hour, minute] = time.split(':').map(Number);
+  return hour * 60 + minute;
+}
+
 function isKnownTimezone(timezone: string): boolean {
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: timezone });
@@ -221,6 +227,10 @@ export function validateSettings(s: Settings): string[] {
   }
   // HH:MM strings are zero-padded, so string comparison is chronological.
   if (s.window.start >= s.window.end) errors.push('Active window: start must be before end');
+  // Otherwise the first send of a day could be planned after the window closes, and that day would send nothing.
+  else if (s.pacing.dayStartJitterMinutes >= minutesOfDay(s.window.end) - minutesOfDay(s.window.start)) {
+    errors.push('First send of the day: must be shorter than the active hours');
+  }
   if (s.window.days.length === 0) errors.push('Active window: pick at least one day');
   if (!isKnownTimezone(s.window.timezone)) errors.push(`Active window: unknown timezone ${s.window.timezone}`);
   return errors;

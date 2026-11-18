@@ -9,7 +9,7 @@ import type { ActionOutcome } from './failure';
 import { expireOneInvite, finishDueLeads, runAcceptanceChecks, runInvitePollIfDue } from './housekeeping';
 import { runInviteAction } from './invite';
 import { runMessageAction } from './message';
-import { dayStartAt, pickGapMs, withdrawalGapMs } from './pacing';
+import { dayStartAt, longestPlanAheadMs, pickGapMs, withdrawalGapMs } from './pacing';
 import { acquireTickLock, getAppState, releaseTickLock, tickLeaseEnd, updateAppState, type AppState } from './state';
 import { MESSAGE_STEP_BY_STATUS, type MessageStep } from './steps';
 import { getUsage, remainingCapacity, type Remaining } from './usage';
@@ -36,9 +36,17 @@ export const OUTREACH_START_BUDGET_MS = 30_000;
  * route checks this sum against `maxDuration`.
  *
  * Housekeeping within `OUTREACH_START_BUDGET_MS` leaves at least 80 s, and a wait is at most
- * `MAX_JITTER_SECONDS`, so a wait is only ever cut short after slow housekeeping.
+ * `MAX_JITTER_SECONDS` (`PLANNED_WAIT_LOOKAHEAD_MS` for a planned moment), so a wait is only ever cut short
+ * after slow housekeeping.
  */
 export const ACTION_START_BUDGET_MS = 110_000;
+
+/**
+ * A tick waits for a planned send that is at most this far away (spec §8 "Spacing"), whatever the random
+ * wait in Settings, so a tick every minute reaches every planned moment. Further away, the send is left for
+ * a later tick. It stays within `MAX_JITTER_SECONDS`, the wait that the budgets above were sized for.
+ */
+export const PLANNED_WAIT_LOOKAHEAD_MS = 90_000;
 
 export type TickResult = {
   status: 'locked' | 'paused' | 'outside_window' | 'done';
@@ -111,9 +119,10 @@ async function expireOneInviteWhenSpaced(deps: EngineDeps, settings: Settings, n
 
 /**
  * The sends still planned for today: the invites that the caps and the due `queued` leads allow, plus the
- * messages that the cap and the leads due before the window closes allow. Paused leads are not counted.
+ * messages that the cap and the leads due before the window closes allow. Paused leads are not counted,
+ * and neither is a type of send that is paused.
  */
-async function countPlannedSends(db: Db, remaining: Remaining, now: Date, windowEnd: Date): Promise<number> {
+async function countPlannedSends(db: Db, state: AppState, remaining: Remaining, now: Date, windowEnd: Date): Promise<number> {
   const [due] = await db
     .select({
       invites: countWhere(and(eq(leads.status, 'queued'), lte(leads.nextActionAt, now))),
@@ -121,7 +130,9 @@ async function countPlannedSends(db: Db, remaining: Remaining, now: Date, window
     })
     .from(leads)
     .where(and(eq(leads.paused, false), inArray(leads.status, ['queued', ...MESSAGE_STATUSES])));
-  return Math.min(remaining.invites, remaining.profileViews, due.invites) + Math.min(remaining.messages, due.messages);
+  const invites = isPausedAfter(state.invitesPausedUntil, now) ? 0 : Math.min(remaining.invites, remaining.profileViews, due.invites);
+  const messages = isPausedAfter(state.messagesPausedUntil, now) ? 0 : Math.min(remaining.messages, due.messages);
+  return invites + messages;
 }
 
 /**
@@ -132,7 +143,7 @@ async function planNextSend(deps: EngineDeps, settings: Settings, bounds: Window
   const { db } = deps;
   const now = deps.now();
   const remaining = remainingCapacity(await getUsage(db, now, settings.window.timezone), settings.caps);
-  const planned = await countPlannedSends(db, remaining, now, bounds.end);
+  const planned = await countPlannedSends(db, await getAppState(db), remaining, now, bounds.end);
   const gapMs = pickGapMs({ timeLeftMs: bounds.end.getTime() - now.getTime(), planned, pacing: settings.pacing, random: deps.random });
   await updateAppState(db, { nextOutreachAt: new Date(now.getTime() + gapMs) });
 }
@@ -140,7 +151,8 @@ async function planNextSend(deps: EngineDeps, settings: Settings, bounds: Window
 /**
  * Runs the picked action after the wait, checking again what the wait may have changed: the app or the
  * action's type paused, the settings saved, the window closed, or the lead changed. Once the action has
- * run, whatever its outcome, it plans the next send; a check that stops the action leaves the plan as it is.
+ * been called, it plans the next send, whether the action returned or threw: a throw can come after a
+ * real send. A check that stops the action first leaves the plan as it is.
  */
 async function runAfterWait(
   deps: EngineDeps,
@@ -160,10 +172,18 @@ async function runAfterWait(
 
   const lead = await rereadPickedLead(db, picked.lead, pickedAt);
   if (lead === null) return { status: 'done', action: { leadId: picked.lead.id, result: 'superseded' } };
-  const action =
-    picked.kind === 'message'
-      ? await runMessageAction(deps, lead, picked.step, settings)
-      : await runInviteAction(deps, lead, settings);
+  let action: ActionOutcome;
+  try {
+    action =
+      picked.kind === 'message'
+        ? await runMessageAction(deps, lead, picked.step, settings)
+        : await runInviteAction(deps, lead, settings);
+  } catch (err) {
+    // The action's own error is the one that propagates. A planning failure here is almost always the same
+    // database failure, so it is dropped rather than allowed to replace it.
+    await planNextSend(deps, settings, bounds).catch(() => {});
+    throw err;
+  }
   await planNextSend(deps, settings, bounds);
   return { status: 'done', action };
 }
@@ -198,16 +218,23 @@ async function runLockedTick(deps: EngineDeps, now: Date): Promise<TickResult> {
     plannedAt = dayStartAt(bounds.start, now, settings.pacing, deps.random);
     await updateAppState(db, { nextOutreachAt: plannedAt });
   }
+  // A moment planned further ahead than the current settings can plan one was made under other settings:
+  // it is brought forward to that distance. With spacing off the distance is 0, so this takes effect at once.
+  const latestTrusted = new Date(now.getTime() + longestPlanAheadMs(settings.pacing));
+  if (plannedAt > latestTrusted) {
+    plannedAt = latestTrusted;
+    await updateAppState(db, { nextOutreachAt: plannedAt });
+  }
 
   // A stored wait above the validated maximum (an old row, or one edited by hand) is not trusted.
   const jitterSeconds = Math.min(settings.caps.jitterMaxSeconds, MAX_JITTER_SECONDS);
   // What is left, at `at`, of the time in which the action has to start.
   const waitBudgetMs = (at: Date) => ACTION_START_BUDGET_MS - (at.getTime() - now.getTime());
 
-  // The longest wait of a tick stays the random-wait maximum, cut by the time budget: a planned moment
+  // A tick waits for a planned moment up to PLANNED_WAIT_LOOKAHEAD_MS away, cut by the time budget: a moment
   // further away is left for a later tick, before any lead is picked.
   const beforePick = deps.now();
-  if (plannedAt.getTime() - beforePick.getTime() > Math.min(jitterSeconds * 1000, waitBudgetMs(beforePick))) {
+  if (plannedAt.getTime() - beforePick.getTime() > Math.min(PLANNED_WAIT_LOOKAHEAD_MS, waitBudgetMs(beforePick))) {
     return { status: 'done', finished, action: null };
   }
 

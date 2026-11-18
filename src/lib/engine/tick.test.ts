@@ -2,11 +2,12 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { leads, settingsTable } from '@/db/schema';
 import { saveSettings } from '@/lib/settings/repo';
+import { MAX_JITTER_SECONDS } from '@/lib/settings/settings';
 import { UnipileError } from '@/lib/unipile/errors';
 import { createTestEngine, getLead, listEvents, NOW, seedEvents, seedLead, type TestEngine } from '@/test-utils/engine';
 import { makeProfile } from '@/test-utils/fake-unipile';
 import { acquireTickLock, getAppState, setRunning, updateAppState } from './state';
-import { runTick, TICK_LEASE_MS } from './tick';
+import { PLANNED_WAIT_LOOKAHEAD_MS, runTick, TICK_LEASE_MS } from './tick';
 
 describe('tick', () => {
   let e: TestEngine;
@@ -231,6 +232,19 @@ describe('tick', () => {
     await expect(runTick(e.deps)).rejects.toThrow('boom');
     expect(await acquireTickLock(e.db, NOW, TICK_LEASE_MS)).toBe(true);
   });
+  it('withdraws an expired invite on each of two ticks in a row while spacing is off', async () => {
+    await updateAppState(e.db, { nextInvitePollAt: new Date(NOW.getTime() + 3_600_000) });
+    const a = await seedLead(e.db, { status: 'invite_sent', invitationId: 'inv_a', nextActionAt: new Date('2026-11-17T07:00:00Z') });
+    const b = await seedLead(e.db, { status: 'invite_sent', invitationId: 'inv_b', nextActionAt: new Date('2026-11-17T08:00:00Z') });
+    await runTick(e.deps); await runTick(e.deps);
+    expect(methods()).toEqual(['cancelInvitation', 'cancelInvitation']);
+    expect([(await getLead(e.db, a.id)).status, (await getLead(e.db, b.id)).status]).toEqual(['invite_expired', 'invite_expired']);
+  });
+  it('sends on the late path once spacing is off, even when a send was planned hours ahead', async () => {
+    await updateAppState(e.db, { nextOutreachAt: new Date(NOW.getTime() + 3 * 3_600_000) }); await acceptedDue();
+    expect((await runTick(e.deps)).action?.result).toBe('messaged');
+    expect(e.sleeps).toEqual([45_000]);
+  });
 });
 
 describe('tick with spacing on', () => {
@@ -307,8 +321,8 @@ describe('tick with spacing on', () => {
   });
 
   // Beyond the brief's list: the time limits and the checks after the wait, with spacing on.
-  it('never waits longer than the random-wait maximum for the planned moment', async () => {
-    // 90 s is the longest wait (the random-wait maximum); a moment 91 s away is left for a later tick.
+  it('never waits longer than 90 seconds for the planned moment', async () => {
+    // 90 s is the longest wait for a planned moment; a moment 91 s away is left for a later tick.
     await updateAppState(e.db, { nextOutreachAt: at(91_000) }); await acceptedDue();
     expect((await runTick(e.deps)).action).toBeNull();
     expect(e.sleeps).toEqual([]);
@@ -362,5 +376,65 @@ describe('tick with spacing on', () => {
     e.setNow(new Date('2026-11-21T10:00:00Z')); await acceptedDue();
     expect((await runTick(e.deps)).status).toBe('outside_window');
     expect((await getAppState(e.db)).nextOutreachAt).toBeNull();
+  });
+
+  // Fix round 1.
+  it('waits at most 90 seconds for a planned moment, inside the random-wait limit the budgets were sized for', () => {
+    expect(PLANNED_WAIT_LOOKAHEAD_MS).toBe(90_000);
+    expect(PLANNED_WAIT_LOOKAHEAD_MS).toBeLessThanOrEqual(MAX_JITTER_SECONDS * 1000);
+  });
+  it('waits for the planned moment even with the random wait set to 0', async () => {
+    e = await createTestEngine({ settings: (s) => ({ ...s, caps: { ...s.caps, jitterMaxSeconds: 0 }, pacing: { minGapMinutes: 4, maxGapMinutes: 45, dayStartJitterMinutes: 45, followupJitterMinutes: 0 } }) });
+    await updateAppState(e.db, { nextOutreachAt: at(40_000) }); await acceptedDue();
+    expect((await runTick(e.deps)).action?.result).toBe('messaged');
+    expect(e.sleeps).toEqual([40_000]);
+  });
+  it('cuts a planned moment further away than the settings allow, and sends nothing yet', async () => {
+    await updateAppState(e.db, { nextOutreachAt: at(3 * 3_600_000) }); await acceptedDue();
+    expect((await runTick(e.deps)).action).toBeNull();
+    // 1.5 × the longest average pause of 45 minutes.
+    expect((await getAppState(e.db)).nextOutreachAt).toEqual(at(67.5 * 60_000));
+    expect(methods()).toEqual([]);
+  });
+  it('plans no invite while invites are paused', async () => {
+    await updateAppState(e.db, { nextOutreachAt: NOW, invitesPausedUntil: at(2 * 3_600_000) }); await acceptedDue();
+    for (let i = 0; i < 36; i++) await seedLead(e.db, { slug: `queued-${i}` });
+    expect((await runTick(e.deps)).action?.result).toBe('messaged');
+    // Nothing else is planned today, so the pause is the longest average.
+    expect((await getAppState(e.db)).nextOutreachAt).toEqual(at(45 * 60_000));
+  });
+  it('plans no message while messages are paused', async () => {
+    e.fake.profiles.set('jane-doe', makeProfile());
+    await updateAppState(e.db, { nextOutreachAt: NOW, messagesPausedUntil: at(2 * 3_600_000) });
+    await seedLead(e.db, { slug: 'jane-doe' });
+    for (let i = 0; i < 19; i++) await seedLead(e.db, { status: 'messaged', providerId: `ACoLater${i}`, nextActionAt: at(3_600_000) });
+    expect((await runTick(e.deps)).action?.result).toBe('invited');
+    expect((await getAppState(e.db)).nextOutreachAt).toEqual(at(45 * 60_000));
+  });
+  it('plans the next send when the action throws after a real send, and still fails the tick', async () => {
+    await updateAppState(e.db, { nextOutreachAt: NOW }); await acceptedDue();
+    // The message goes out, then the database fails on the write of its event.
+    const realDb = e.deps.db;
+    let failNextInsert = false;
+    e.deps.db = new Proxy(realDb, {
+      get(target, prop, receiver) {
+        if (prop === 'insert' && failNextInsert) {
+          failNextInsert = false;
+          return () => { throw new Error('neon: fetch failed'); };
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    e.deps.sleep = async () => { failNextInsert = true; };
+    await expect(runTick(e.deps)).rejects.toThrow('neon: fetch failed');
+    expect(methods()).toEqual(['findChatWithAttendee', 'startChat']);
+    expect((await getAppState(e.db)).nextOutreachAt).toEqual(at(45 * 60_000));
+  });
+  it('adds the follow-up jitter to the follow-up of a sent first message', async () => {
+    e = await createTestEngine({ settings: (s) => ({ ...s, pacing: { ...s.pacing, followupJitterMinutes: 180 } }) });
+    const lead = await acceptedDue();
+    expect((await runTick(e.deps)).action?.result).toBe('messaged');
+    // 2 days after the send, plus half of 180 minutes.
+    expect((await getLead(e.db, lead.id)).nextActionAt).toEqual(new Date('2026-11-19T10:30:00Z'));
   });
 });

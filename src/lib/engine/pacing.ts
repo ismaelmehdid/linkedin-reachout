@@ -46,6 +46,15 @@ export function dayStartAt(windowStart: Date, now: Date, pacing: Settings['pacin
   return new Date(now.getTime() + Math.round(r * LATE_DAY_START_MS));
 }
 
+/**
+ * The furthest ahead these settings can plan a send: 1.5 × the longest average pause, or the day-start time,
+ * whichever is longer. A planned moment further away was made under other settings and is not trusted.
+ * 0 when spacing is off.
+ */
+export function longestPlanAheadMs(pacing: Settings['pacing']): number {
+  return Math.max(1.5 * pacing.maxGapMinutes, pacing.dayStartJitterMinutes) * MINUTE_MS;
+}
+
 /** The pause after an invite withdrawal: a random 10 to 30 minutes, or 0 when spacing is off. */
 export function withdrawalGapMs(pacing: Settings['pacing'], random: () => number): number {
   if (pacing.maxGapMinutes === 0) return 0;
