@@ -5,15 +5,9 @@ import type { ChatMessage } from '@/lib/unipile/types';
 import type { EngineDeps } from './deps';
 import { logEvent } from './events';
 import { failLead, handleActionError, updateLeadIfStatus, type ActionOutcome } from './failure';
-import { renderForLead } from './lead-templates';
+import { leadMessageText, textFailureReason } from './lead-templates';
 import { resetErrorStreak } from './state';
 import { ECHO_WINDOW_MS, nextDueAfterSend, statusAfterMessage, type MessageStep } from './steps';
-
-const TEMPLATE_BY_STEP = {
-  first_message: 'firstMessage',
-  followup_1: 'followup1',
-  followup_2: 'followup2',
-} as const satisfies Record<MessageStep, keyof Settings['templates']>;
 
 /** The status a lead keeps while a follow-up is pending: the one its previous message left. */
 const STATUS_BEFORE_FOLLOWUP = {
@@ -124,7 +118,8 @@ export async function runMessageAction(deps: EngineDeps, lead: Lead, step: Messa
   // message, everything after the previous step and its echo window for a follow-up.
   const isFirstMessage = step === 'first_message';
   const candidates = messagesAfter(messages, 'owner', isFirstMessage ? lead.sequenceStartedAt : shifted(lead.lastActionAt, ECHO_WINDOW_MS), now);
-  const rendered = renderForLead(settings.templates[TEMPLATE_BY_STEP[step]], lead);
+  // An AI lead's first message is its approved draft; every other step renders its template.
+  const rendered = leadMessageText(lead, step, settings);
 
   // 4. Already sent. When the record of a follow-up was lost but its webhook arrived, the webhook saw a
   // manual message and moved `lastActionAt` onto it, out of the candidates. So after a manual message the
@@ -157,8 +152,7 @@ export async function runMessageAction(deps: EngineDeps, lead: Lead, step: Messa
 
   // 6. Render and send.
   if (!rendered.ok) {
-    const reason = rendered.reason === 'missing_variable' ? `missing_variable: ${rendered.missing.join(', ')}` : 'invalid_template';
-    await failLead(db, lead, reason, now);
+    await failLead(db, lead, textFailureReason(rendered), now);
     return outcome('failed');
   }
   if (chatId === null && lead.providerId === null) {

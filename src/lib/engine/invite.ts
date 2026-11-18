@@ -1,4 +1,4 @@
-import { and, eq, ne } from 'drizzle-orm';
+import { and, eq, isNull, ne, type SQL } from 'drizzle-orm';
 import { leads, type Lead } from '@/db/schema';
 import type { Db } from '@/db/types';
 import { addLocalDays } from '@/lib/schedule/window';
@@ -8,7 +8,7 @@ import type { UnipileProfile } from '@/lib/unipile/types';
 import type { EngineDeps } from './deps';
 import { logEvent } from './events';
 import { failLead, handleActionError, updateLeadIfStatus, type ActionOutcome } from './failure';
-import { checkLeadTemplates, renderForLead } from './lead-templates';
+import { checkLeadTemplates, isAiLead, leadInviteNote } from './lead-templates';
 import { resetErrorStreak } from './state';
 
 function profileFields(profile: UnipileProfile) {
@@ -34,7 +34,17 @@ async function belongsToAnotherLead(db: Db, providerId: string, leadId: number):
   return other !== undefined;
 }
 
-/** Already a first-degree connection: no invite, the first message is due now. */
+/**
+ * For an AI lead, the drafts as this action read them: a write matches only while they are unchanged, so
+ * drafts regenerated or edited during the profile fetch stop the invite. Undefined for a pasted lead.
+ */
+function sameDrafts(lead: Lead): SQL | undefined {
+  if (!isAiLead(lead)) return undefined;
+  const note = lead.inviteNoteDraft === null ? isNull(leads.inviteNoteDraft) : eq(leads.inviteNoteDraft, lead.inviteNoteDraft);
+  return and(eq(leads.draftStatus, lead.draftStatus), note);
+}
+
+/** Already a first-degree connection: no invite, the first message is due now. An AI lead's invite note is not checked. */
 async function markAlreadyConnected(deps: EngineDeps, lead: Lead, settings: Settings, now: Date): Promise<ActionOutcome> {
   const check = checkLeadTemplates(lead, settings, { includeInvite: false });
   if (!check.ok) {
@@ -71,8 +81,9 @@ function markInviteSent(db: Db, lead: Lead, invitationId: string | null, now: Da
 }
 
 /**
- * Fetches the profile, checks every template against it, then sends the invite with its note.
- * All four templates are checked first, so a value a later message needs fails the lead before anyone is contacted.
+ * Fetches the profile, checks every text against it, then sends the invite with its note.
+ * All four texts are checked first, so a value a later message needs fails the lead before anyone is contacted.
+ * An AI lead sends its approved note as written; drafts that are not approved, or a blank one, fail it: it never falls back to a template.
  */
 export async function runInviteAction(deps: EngineDeps, lead: Lead, settings: Settings): Promise<ActionOutcome> {
   const { db } = deps;
@@ -93,13 +104,14 @@ export async function runInviteAction(deps: EngineDeps, lead: Lead, settings: Se
   }
 
   const fields = profileFields(profile);
-  if (!(await updateLeadIfStatus(db, lead, fields, now))) return outcome('superseded');
+  // An approved lead must still be approved with the same note: the note it sends is the one read here.
+  if (!(await updateLeadIfStatus(db, lead, fields, now, sameDrafts(lead)))) return outcome('superseded');
   const withProfile: Lead = { ...lead, ...fields };
 
   if (profile.networkDistance === 'FIRST_DEGREE') return markAlreadyConnected(deps, withProfile, settings, now);
 
   const check = checkLeadTemplates(withProfile, settings, { includeInvite: true });
-  const note = renderForLead(settings.templates.inviteNote, withProfile);
+  const note = leadInviteNote(withProfile, settings);
   if (!check.ok || !note.ok) {
     // The check covers the note too; `note.ok` is only tested here to narrow its type.
     await failLead(db, withProfile, check.ok ? 'invalid_template' : check.reason, now);

@@ -1,4 +1,4 @@
-import { and, eq, gt, sql } from 'drizzle-orm';
+import { and, eq, gt, sql, type SQL } from 'drizzle-orm';
 import { events, leads, type Lead, type NewLead } from '@/db/schema';
 import type { Db } from '@/db/types';
 import { nextActiveDayStart } from '@/lib/schedule/window';
@@ -22,20 +22,21 @@ export type ActionOutcome = {
 };
 
 /**
- * Compare-and-set: updates the lead only while its status is still the one in `lead`, and stamps
- * `updatedAt` with the injected time `at`. Returns false when no row matched, which means a webhook
- * changed the lead first.
+ * Compare-and-set: updates the lead only while its status is still the one in `lead` and `condition`
+ * holds, and stamps `updatedAt` with the injected time `at`. Returns false when no row matched, which
+ * means a webhook (or the owner) changed the lead first.
  */
 export async function updateLeadIfStatus(
   db: Db,
   lead: Pick<Lead, 'id' | 'status'>,
   patch: Partial<NewLead>,
   at: Date,
+  condition?: SQL,
 ): Promise<boolean> {
   const rows = await db
     .update(leads)
     .set({ ...patch, updatedAt: at })
-    .where(and(eq(leads.id, lead.id), eq(leads.status, lead.status)))
+    .where(and(eq(leads.id, lead.id), eq(leads.status, lead.status), condition))
     .returning({ id: leads.id });
   return rows.length > 0;
 }

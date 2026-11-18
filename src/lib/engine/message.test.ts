@@ -431,4 +431,59 @@ describe('message action', () => {
       expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'messaged', chatId: 'dry_chat_9' });
     });
   });
+
+  describe('an AI lead, whose drafts are approved', () => {
+    const DRAFT = 'Thanks for connecting, Jane. How is the Rust hire going?';
+    const accepted = (patch: Parameters<typeof seedLead>[1] = {}) =>
+      seedLead(e.db, { status: 'accepted', providerId: 'ACoJane', firstName: 'Jane', sequenceStartedAt: SEQ, draftStatus: 'approved',
+        inviteNoteDraft: 'Hi Jane', firstMessageDraft: DRAFT, ...patch });
+
+    it('sends the approved first message as written', async () => {
+      // The seeded lead has no headline, so this template could not render for it.
+      e = await createTestEngine({ templates: { firstMessage: 'About {{headline}}' } });
+      const lead = await accepted();
+      expect((await runMessageAction(e.deps, lead, 'first_message', e.settings)).result).toBe('messaged');
+      expect(sends()).toEqual([{ method: 'startChat', args: ['ACoJane', DRAFT] }]);
+      expect((await listEvents(e.db)).at(-1)).toMatchObject({ type: 'message_sent', payload: { step: 'first_message', text: DRAFT, dryRun: false } });
+      expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'messaged', lastAction: 'first_message', updatedAt: NOW });
+    });
+    it('records a first message draft that is already in the chat instead of sending it again', async () => {
+      const lead = await accepted({ chatId: 'chat_1', inviteSentAt: SEQ });
+      e.fake.chatMessages.set('chat_1', [own('m2', '2026-11-17T08:55:00Z', ` ${DRAFT.replace(' How', '\n How')} `), own('m1', '2026-11-10T09:00:05Z', 'Hi Jane')]);
+      expect((await runMessageAction(e.deps, lead, 'first_message', e.settings)).result).toBe('messaged');
+      expect(methods()).toEqual(['listChatMessages']);
+      expect((await listEvents(e.db)).map((x) => [x.type, x.payload])).toEqual([['message_sent', { step: 'first_message', text: DRAFT, dryRun: false, recovered: true }]]);
+    });
+    it('treats the rendered first-message template in the chat as a manual message, not as the draft', async () => {
+      const lead = await accepted({ chatId: 'chat_1', inviteSentAt: SEQ });
+      e.fake.chatMessages.set('chat_1', [own('m2', '2026-11-17T08:55:00Z', 'Thanks Jane'), own('m1', '2026-11-10T09:00:05Z', 'Hi Jane')]);
+      expect((await runMessageAction(e.deps, lead, 'first_message', e.settings)).result).toBe('superseded');
+      expect(sends()).toEqual([]);
+      expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'messaged', lastAction: 'manual_message' });
+    });
+    it.each([null, '  '])('fails with missing_draft and sends nothing when the first message draft is %j', async (draft) => {
+      const lead = await accepted({ firstMessageDraft: draft });
+      expect((await runMessageAction(e.deps, lead, 'first_message', e.settings)).result).toBe('failed');
+      expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'failed', failureReason: 'missing_draft', failedFromStatus: 'accepted', updatedAt: NOW });
+      expect(sends()).toEqual([]);
+    });
+    it('fails a first message draft that holds a raw tag', async () => {
+      const lead = await accepted({ firstMessageDraft: 'Thanks {{first_name}}' });
+      await runMessageAction(e.deps, lead, 'first_message', e.settings);
+      expect((await getLead(e.db, lead.id)).failureReason).toBe('invalid_template');
+      expect(sends()).toEqual([]);
+    });
+    it.each(['ready', 'pending'] as const)('fails with draft_not_approved and sends nothing when an accepted founder\'s drafts are %s', async (draftStatus) => {
+      const lead = await accepted({ draftStatus });
+      expect((await runMessageAction(e.deps, lead, 'first_message', e.settings)).result).toBe('failed');
+      expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'failed', failureReason: 'draft_not_approved', failedFromStatus: 'accepted', updatedAt: NOW });
+      expect(sends()).toEqual([]);
+      expect((await listEvents(e.db)).filter((x) => x.type === 'message_sent')).toEqual([]);
+    });
+    it('sends follow-up 1 from the template', async () => {
+      const lead = await accepted({ status: 'messaged', chatId: 'chat_1' });
+      await runMessageAction(e.deps, lead, 'followup_1', e.settings);
+      expect(sends()).toEqual([{ method: 'sendMessage', args: ['chat_1', 'Bump Jane'] }]);
+    });
+  });
 });
