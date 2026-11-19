@@ -63,5 +63,58 @@ describe('lead templates', () => {
       expect(leadMessageText(founder, 'followup_1', DEFAULT_SETTINGS)).toEqual(renderForLead(DEFAULT_SETTINGS.templates.followup1, lead));
       expect(checkLeadTemplates({ ...founder, firstMessageDraft: null }, DEFAULT_SETTINGS, { includeInvite: false })).toEqual({ ok: false, reason: 'draft_not_approved' });
     });
+    it('sends the note draft while Settings keeps the AI-written note', () =>
+      expect(leadInviteNote(ai, { ...unrenderable, founderInviteNote: 'draft' })).toEqual({ ok: true, text: ' Hi Jane,\n saw Acme ' }));
+
+    describe('while Settings sends the invite-note template to founders', () => {
+      const templateMode = (t: Partial<Settings['templates']> = {}): Settings => ({ ...withT(t), founderInviteNote: 'template' });
+      const note = 'Hi {{first_name}} at {{company}}';
+
+      it('sends the rendered invite-note template instead of the note draft', () =>
+        expect(leadInviteNote(ai, templateMode({ inviteNote: note }))).toEqual({ ok: true, text: 'Hi Jane at Acme' }));
+      it('still sends the approved first-message draft, and the templates for the follow-ups', () => {
+        const settings = templateMode({ firstMessage: '{{headline}} {{' });
+        expect(leadMessageText(ai, 'first_message', settings)).toEqual({ ok: true, text: 'Thanks for connecting, Jane' });
+        expect(leadMessageText(ai, 'followup_2', settings)).toEqual(renderForLead(DEFAULT_SETTINGS.templates.followup2, lead));
+        expect(checkLeadTemplates(ai, settings, { includeInvite: true })).toEqual({ ok: true });
+      });
+      // The note draft is not read at all: whatever it holds, the template goes out.
+      it.each([
+        ['null', null],
+        ['left out', undefined],
+        ['empty', ''],
+        ['blank', '  \n '],
+        ['with a raw tag', 'Hi {{first_name}}'],
+        ['over 300 characters', 'x'.repeat(301)],
+      ])('ignores the note draft: %s', (_label, draft) => {
+        const settings = templateMode({ inviteNote: note });
+        expect(leadInviteNote({ ...ai, inviteNoteDraft: draft }, settings)).toEqual({ ok: true, text: 'Hi Jane at Acme' });
+        expect(checkLeadTemplates({ ...ai, inviteNoteDraft: draft }, settings, { includeInvite: true })).toEqual({ ok: true });
+      });
+      it.each(['pending', 'generating', 'ready', 'failed'] as const)('gives draft_not_approved for a founder whose drafts are %s', (draftStatus) => {
+        const founder = { ...ai, draftStatus };
+        expect(leadInviteNote(founder, templateMode())).toEqual({ ok: false, reason: 'draft_not_approved' });
+        expect(checkLeadTemplates(founder, templateMode(), { includeInvite: true })).toEqual({ ok: false, reason: 'draft_not_approved' });
+      });
+      // The first message is the draft in this mode too, and it is checked before the invite.
+      it.each([null, ' '])('still fails with missing_draft when the first message draft is %j', (message) =>
+        expect(checkLeadTemplates({ ...ai, firstMessageDraft: message }, templateMode(), { includeInvite: true })).toEqual({ ok: false, reason: 'missing_draft' }));
+      it('fails with note_too_long when the rendered template is over 300 characters', () =>
+        expect(checkLeadTemplates({ ...ai, company: 'x'.repeat(300) }, templateMode({ inviteNote: 'Hi {{company}}' }), { includeInvite: true }))
+          .toEqual({ ok: false, reason: 'note_too_long: 303/300' }));
+      it('fails with missing_variable when the template needs a value the lead lacks, listed with the follow-ups', () =>
+        expect(checkLeadTemplates(ai, templateMode({ inviteNote: 'About {{position}}', followup1: 'Re {{headline}}' }), { includeInvite: true }))
+          .toEqual({ ok: false, reason: 'missing_variable: position, headline' }));
+      it('fails with invalid_template when a lead value would put a raw tag in the note', () =>
+        expect(checkLeadTemplates({ ...ai, company: '{{x}}' }, templateMode({ inviteNote: note }), { includeInvite: true }))
+          .toEqual({ ok: false, reason: 'invalid_template' }));
+      it('skips the template for a founder who is already connected', () =>
+        expect(checkLeadTemplates(ai, templateMode({ inviteNote: 'About {{position}}' }), { includeInvite: false })).toEqual({ ok: true }));
+      it('changes nothing for a pasted lead', () => {
+        const pasted = { ...ai, draftStatus: 'none' as const };
+        expect(leadInviteNote(pasted, templateMode({ inviteNote: note }))).toEqual({ ok: true, text: 'Hi Jane at Acme' });
+        expect(leadMessageText(pasted, 'first_message', templateMode())).toEqual(renderForLead(DEFAULT_SETTINGS.templates.firstMessage, lead));
+      });
+    });
   });
 });

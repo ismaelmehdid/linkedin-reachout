@@ -38,7 +38,20 @@ describe('formDataToSettings', () => {
       caps: { ...DEFAULT_SETTINGS.caps, invitesPerDay: 20 },
       pacing: DEFAULT_SETTINGS.pacing,
       window: { days: [1, 3], start: '08:30', end: '19:00', timezone: 'Europe/Paris' },
+      founderInviteNote: 'draft',
     }));
+
+  // An unticked checkbox sends nothing, so a missing field means the AI-written note.
+  it('reads the ticked founder note checkbox as template, and anything else as draft', () => {
+    expect((formDataToSettings(fullForm({ founderInviteNote: 'template' })) as Settings).founderInviteNote).toBe('template');
+    expect((formDataToSettings(fullForm()) as Settings).founderInviteNote).toBe('draft');
+    expect((formDataToSettings(fullForm({ founderInviteNote: 'on' })) as Settings).founderInviteNote).toBe('draft');
+  });
+
+  it('saves the ticked founder note checkbox', async () => {
+    const result = await saveSettings(await createTestDb(), formDataToSettings(fullForm({ founderInviteNote: 'template' })));
+    expect(result.ok && result.settings.founderInviteNote).toBe('template');
+  });
 
   it('turns an empty number field into NaN so validation rejects it', () =>
     expect((formDataToSettings(fullForm({ invitesPerDay: '' })) as Settings).caps.invitesPerDay).toBeNaN());
@@ -61,9 +74,10 @@ describe('formDataToSettings', () => {
   it.each([
     ['a full form', fullForm()],
     ['an empty form', new FormData()],
-  ])('emits every key of templates, delays, caps, pacing and window for %s', (_name, form) => {
+  ])('emits every key of templates, delays, caps, pacing and window, and the founder note, for %s', (_name, form) => {
     const settings = formDataToSettings(form) as Settings;
     for (const section of SECTIONS) expect(sortedKeys(settings[section])).toEqual(sortedKeys(DEFAULT_SETTINGS[section]));
+    expect(settings.founderInviteNote).toBe('draft');
   });
 
   it('makes saveSettings reject a form with missing fields instead of saving defaults', async () => {

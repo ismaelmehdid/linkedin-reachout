@@ -148,3 +148,7 @@ An uploaded lead starts with `draft_status = pending`.
 - Follow-ups stay on templates; the invite-note and first-message templates stay required for pasted leads.
 - No AI call happens without the owner pressing a button.
 - Builder-check rulings (2026-11-17): coding jobs only, the same rule for both files; an explicit approval before any AI draft is sent; a first message that reads true for an already-connected founder.
+
+## Addendum, 2026-11-19: the invite-note template for founders
+
+The owner generated every draft, kept the first messages and did not like the AI-written invite notes. A checkbox under the Invite note in Settings, "Send this template to uploaded founders too, instead of their AI-written note" (setting `founderInviteNote`: `draft` by default, or `template`), now lets an approved founder be sent the invite-note template, rendered with the profile fetched at invite time like a pasted lead's. While it is ticked, the "Engine" rules above change for the note only: the note draft is kept but not sent and not checked (a blank one is not `missing_draft`), and switching back sends it again. The first message is still the approved draft, approval is still required, and the Start blockers are unchanged. Rulings 84 to 88 in `docs/execution-rulings.md` record the details.

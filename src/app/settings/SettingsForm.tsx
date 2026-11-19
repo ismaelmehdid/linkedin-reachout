@@ -203,6 +203,23 @@ export default function SettingsForm({ settings, leads }: { settings: Settings; 
                 </p>
               )}
               {result && <TemplatePreview result={result} />}
+              {key === 'inviteNote' && (
+                <div className="flex flex-col gap-1">
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="checkbox"
+                      name="founderInviteNote"
+                      value="template"
+                      defaultChecked={settings.founderInviteNote === 'template'}
+                    />
+                    Send this template to uploaded founders too, instead of their AI-written note
+                  </label>
+                  <span className="text-sm text-zinc-500">
+                    While this is ticked, the note the AI wrote for a founder is kept but not sent. Their first message
+                    is still the approved AI draft.
+                  </span>
+                </div>
+              )}
             </div>
           );
         })}

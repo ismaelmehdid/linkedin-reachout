@@ -34,6 +34,11 @@ export type Settings = {
     followupJitterMinutes: number;
   };
   window: ActiveWindow;
+  /**
+   * The connection request note of an uploaded founder (an AI lead): its approved AI-written draft, or the
+   * invite-note template rendered for it. Either way its first message is its approved draft.
+   */
+  founderInviteNote: 'draft' | 'template';
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -68,6 +73,8 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   // The owner's hours: Monday to Saturday, San Francisco time. The cron-job.org job must cover the same hours.
   window: { days: [1, 2, 3, 4, 5, 6], start: '08:30', end: '22:00', timezone: 'America/Los_Angeles' },
+  // Settings saved before this key existed get it through the merge in `parseSettings`, so they keep sending the drafts.
+  founderInviteNote: 'draft',
 };
 
 const count = z.number().int().min(0);
@@ -109,6 +116,7 @@ const settingsSchema = z.object({
     end: localTime,
     timezone: z.string(),
   }),
+  founderInviteNote: z.enum(['draft', 'template']),
 });
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

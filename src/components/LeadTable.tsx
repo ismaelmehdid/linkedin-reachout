@@ -12,8 +12,9 @@ import {
   canRegenerate,
   canReview,
   noteLength,
-  notePreview,
+  noteNotSentNotice,
   noteTooLong,
+  readyNotePreview,
 } from './draft-review';
 
 /** One table row, with its dates already formatted in the active window's timezone. */
@@ -120,10 +121,12 @@ const TEXTAREA = 'w-full rounded border border-zinc-300 px-3 py-2 text-sm disabl
 /** Both drafts of one lead, editable while they can still be sent. Saving an edit approves it. */
 function DraftEditor({
   row,
+  founderNoteFromTemplate,
   onFeedback,
   onRegenerated,
 }: {
   row: LeadRow;
+  founderNoteFromTemplate: boolean;
   onFeedback: (feedback: Feedback | null) => void;
   onRegenerated: () => void;
 }) {
@@ -134,6 +137,7 @@ function DraftEditor({
   const [pending, setPending] = useState(false);
   const noteEditable = canEditInviteNote(row.status);
   const messageEditable = canEditFirstMessage(row.status);
+  const noteNotice = noteNotSentNotice(row.status, founderNoteFromTemplate);
   const dirty = note !== savedNote || message !== savedMessage;
 
   async function act(work: () => Promise<Feedback | null>) {
@@ -181,6 +185,7 @@ function DraftEditor({
           {noteLength(note)}/{INVITE_NOTE_MAX_LENGTH}
           {!noteEditable && ' · the invite was sent, so the note can no longer change'}
         </span>
+        {noteNotice && <span className="text-xs text-zinc-500">{noteNotice}</span>}
       </label>
       <label className="flex flex-col gap-1 text-sm">
         <span className="font-medium">First message</span>
@@ -217,12 +222,14 @@ function DraftEditor({
 
 function DraftCell({
   row,
+  founderNoteFromTemplate,
   open,
   onToggle,
   feedback,
   onFeedback,
 }: {
   row: LeadRow;
+  founderNoteFromTemplate: boolean;
   open: boolean;
   onToggle: () => void;
   feedback: Feedback | null;
@@ -243,11 +250,12 @@ function DraftCell({
     }
   }
 
+  const preview = readyNotePreview(row, founderNoteFromTemplate);
   return (
     <div className="flex flex-col gap-1">
       <div>{row.draftStatus === 'none' ? '—' : row.draftStatus}</div>
       {row.draftStatus === 'failed' && row.draftError && <Muted>{row.draftError}</Muted>}
-      {row.draftStatus === 'ready' && row.inviteNoteDraft && <Muted>{notePreview(row.inviteNoteDraft)}</Muted>}
+      {preview && <Muted>{preview}</Muted>}
       <div className="flex flex-wrap gap-1">
         {canReview(row) && (
           <SmallButton onClick={onToggle} expanded={open}>
@@ -276,7 +284,7 @@ function DraftCell({
 
 const COLUMN_COUNT = 7;
 
-function LeadRows({ row }: { row: LeadRow }) {
+function LeadRows({ row, founderNoteFromTemplate }: { row: LeadRow; founderNoteFromTemplate: boolean }) {
   const [open, setOpen] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const reviewing = open && canReview(row);
@@ -303,6 +311,7 @@ function LeadRows({ row }: { row: LeadRow }) {
         <td className="py-2 pr-3">
           <DraftCell
             row={row}
+            founderNoteFromTemplate={founderNoteFromTemplate}
             open={reviewing}
             onToggle={() => setOpen((o) => !o)}
             feedback={feedback}
@@ -324,7 +333,13 @@ function LeadRows({ row }: { row: LeadRow }) {
       {reviewing && (
         <tr className="border-b border-zinc-200 dark:border-zinc-800">
           <td colSpan={COLUMN_COUNT}>
-            <DraftEditor key={draftKey} row={row} onFeedback={setFeedback} onRegenerated={() => setOpen(false)} />
+            <DraftEditor
+              key={draftKey}
+              row={row}
+              founderNoteFromTemplate={founderNoteFromTemplate}
+              onFeedback={setFeedback}
+              onRegenerated={() => setOpen(false)}
+            />
           </td>
         </tr>
       )}
@@ -344,7 +359,18 @@ function Muted({ children }: { children: ReactNode }) {
   return <div className="text-xs text-zinc-500">{children}</div>;
 }
 
-export function LeadTable({ rows, statuses, activeStatus }: { rows: LeadRow[]; statuses: string[]; activeStatus: string | null }) {
+export function LeadTable({
+  rows,
+  statuses,
+  activeStatus,
+  founderNoteFromTemplate,
+}: {
+  rows: LeadRow[];
+  statuses: string[];
+  activeStatus: string | null;
+  /** Settings sends the invite-note template to uploaded founders, so their note drafts are not sent. */
+  founderNoteFromTemplate: boolean;
+}) {
   return (
     <section className="flex flex-col gap-2">
       <h2 className="text-lg font-semibold">Leads</h2>
@@ -380,7 +406,7 @@ export function LeadTable({ rows, statuses, activeStatus }: { rows: LeadRow[]; s
               </tr>
             )}
             {rows.map((row) => (
-              <LeadRows key={row.id} row={row} />
+              <LeadRows key={row.id} row={row} founderNoteFromTemplate={founderNoteFromTemplate} />
             ))}
           </tbody>
         </table>

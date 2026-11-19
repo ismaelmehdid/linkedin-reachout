@@ -89,7 +89,12 @@ export default async function DashboardPage({ searchParams }: PageProps<'/'>) {
       </div>
       {hasAiDrafts(draftCounts) && <DraftsPanel counts={draftCounts} />}
       <div className="flex flex-col gap-2">
-        <LeadTable rows={leads.map((lead) => toLeadRow(lead, timezone))} statuses={[...STATUSES]} activeStatus={status} />
+        <LeadTable
+          rows={leads.map((lead) => toLeadRow(lead, timezone))}
+          statuses={[...STATUSES]}
+          activeStatus={status}
+          founderNoteFromTemplate={settings.founderInviteNote === 'template'}
+        />
         {leads.length === LEAD_LIST_LIMIT && (
           <p className="text-sm text-zinc-500">Showing the {LEAD_LIST_LIMIT} most recently updated leads.</p>
         )}

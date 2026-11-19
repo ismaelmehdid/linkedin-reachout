@@ -153,3 +153,15 @@ describe('aboutMe', () => {
     expect(validateSettings({ ...DEFAULT_SETTINGS, aboutMe: 'x'.repeat(4000) })).not.toContain('About me: must be 4000 characters or less');
   });
 });
+
+describe('founderInviteNote', () => {
+  it('defaults to the AI-written note, as before the setting existed', () => expect(DEFAULT_SETTINGS.founderInviteNote).toBe('draft'));
+  it.each(['draft', 'template'] as const)('accepts %s', (value) =>
+    expect(parseSettings({ founderInviteNote: value }).founderInviteNote).toBe(value));
+  it.each(['both', '', true])('throws on %j', (value) => expect(() => parseSettings({ founderInviteNote: value })).toThrow());
+  it('fills the default into stored settings saved before the setting existed', () => {
+    const stored: Record<string, unknown> = { ...DEFAULT_SETTINGS, templatesSaved: true };
+    delete stored.founderInviteNote;
+    expect(parseSettings(stored).founderInviteNote).toBe('draft');
+  });
+});

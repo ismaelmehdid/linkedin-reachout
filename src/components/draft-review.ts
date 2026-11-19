@@ -53,3 +53,26 @@ export function notePreview(note: string): string {
   const lastSpace = cut.lastIndexOf(' ');
   return `${(lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
 }
+
+const NOTE_NOT_SENT = 'Not sent: the Invite note template in Settings is sent to uploaded founders.';
+
+/**
+ * The line under the note counter while Settings sends the invite-note template to founders, or null. Only
+ * while the note can still change: once the invite is out, the setting of that moment chose its note, and
+ * today's setting says nothing about it.
+ */
+export function noteNotSentNotice(status: string, founderNoteFromTemplate: boolean): string | null {
+  return founderNoteFromTemplate && canEditInviteNote(status) ? NOTE_NOT_SENT : null;
+}
+
+/**
+ * The start of a ready note, shown in the Draft cell, or null. Not while Settings sends the invite-note
+ * template to founders: that note is not what goes out.
+ */
+export function readyNotePreview(
+  lead: { draftStatus: string; inviteNoteDraft: string | null },
+  founderNoteFromTemplate: boolean,
+): string | null {
+  if (founderNoteFromTemplate || lead.draftStatus !== 'ready' || !lead.inviteNoteDraft) return null;
+  return notePreview(lead.inviteNoteDraft);
+}

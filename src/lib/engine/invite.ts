@@ -83,7 +83,9 @@ function markInviteSent(db: Db, lead: Lead, invitationId: string | null, now: Da
 /**
  * Fetches the profile, checks every text against it, then sends the invite with its note.
  * All four texts are checked first, so a value a later message needs fails the lead before anyone is contacted.
- * An AI lead sends its approved note as written; drafts that are not approved, or a blank one, fail it: it never falls back to a template.
+ * An AI lead sends its approved note as written, or, while Settings sends the template to founders, the invite-note
+ * template rendered with the fetched profile like a pasted lead's. Drafts that are not approved, or a blank draft it
+ * would send, fail it: it never falls back from one to the other.
  */
 export async function runInviteAction(deps: EngineDeps, lead: Lead, settings: Settings): Promise<ActionOutcome> {
   const { db } = deps;
@@ -104,7 +106,8 @@ export async function runInviteAction(deps: EngineDeps, lead: Lead, settings: Se
   }
 
   const fields = profileFields(profile);
-  // An approved lead must still be approved with the same note: the note it sends is the one read here.
+  // An AI lead must still be approved with the same note draft. While Settings sends that draft, the note sent
+  // is the one read here; while it sends the template, the template is rendered below with this profile.
   if (!(await updateLeadIfStatus(db, lead, fields, now, sameDrafts(lead)))) return outcome('superseded');
   const withProfile: Lead = { ...lead, ...fields };
 

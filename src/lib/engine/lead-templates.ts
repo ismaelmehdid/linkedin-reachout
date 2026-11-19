@@ -10,7 +10,7 @@ export type LeadTextFields = LeadVariableFields & Pick<Lead, 'draftStatus'> & Pa
 
 /**
  * The text a lead gets, or why it cannot be sent: a template result, or for an AI lead `draft_not_approved`
- * (its drafts are not approved yet) or `missing_draft` (approved, but the draft is blank).
+ * (its drafts are not approved yet) or `missing_draft` (approved, but the draft it would send is blank).
  */
 export type LeadTextResult = RenderResult | { ok: false; reason: 'draft_not_approved' | 'missing_draft' };
 
@@ -38,8 +38,9 @@ export function renderForLead(template: string, lead: LeadVariableFields): Rende
 }
 
 /**
- * An AI lead: an uploaded founder, whose invite note and first message are its drafts once approved, and
- * never the templates. A lead with `none` is a pasted lead that uses the templates.
+ * An AI lead: an uploaded founder, whose first message is its draft once approved, never a template. Its
+ * invite note is its approved draft too, or the invite-note template while `founderInviteNote` is
+ * `template`. A lead with `none` is a pasted lead that uses the templates.
  */
 export function isAiLead(lead: LeadTextFields): boolean {
   return lead.draftStatus !== 'none';
@@ -53,9 +54,17 @@ function draftText(lead: LeadTextFields, draft: string | null | undefined): Lead
   return { ok: true, text: draft };
 }
 
-/** The invite note this lead gets: its approved draft for an AI lead, the rendered template otherwise. The length is not checked here. */
+/**
+ * The invite note this lead gets: the rendered template for a pasted lead; for an AI lead, its approved draft,
+ * or the rendered template while Settings sends the template to founders. The length is not checked here.
+ */
 export function leadInviteNote(lead: LeadTextFields, settings: Settings): LeadTextResult {
-  return isAiLead(lead) ? draftText(lead, lead.inviteNoteDraft) : renderForLead(settings.templates.inviteNote, lead);
+  if (!isAiLead(lead)) return renderForLead(settings.templates.inviteNote, lead);
+  if (settings.founderInviteNote === 'draft') return draftText(lead, lead.inviteNoteDraft);
+  // The note draft is not read, so a blank one fails nothing. Approval still gates the invite: the owner
+  // approved the first message, which goes out once this invite is accepted.
+  if (lead.draftStatus !== 'approved') return { ok: false, reason: 'draft_not_approved' };
+  return renderForLead(settings.templates.inviteNote, lead);
 }
 
 /** The text of a message step: the approved draft for an AI lead's first message, the rendered template otherwise. */
@@ -71,9 +80,10 @@ export function textFailureReason(result: Exclude<LeadTextResult, { ok: true }>)
 }
 
 /**
- * Checks every text this lead will receive: the templates, or for an AI lead its drafts and the follow-up
- * templates. Drafts that are not approved win over a missing draft, which wins over missing variables, which
- * win over an invalid text, which wins over an invite note that is too long.
+ * Checks every text this lead will receive: the templates, or for an AI lead its first-message draft, its
+ * invite note (draft or template, see `leadInviteNote`) and the follow-up templates. Drafts that are not
+ * approved win over a missing draft, which wins over missing variables, which win over an invalid text, which
+ * wins over an invite note that is too long.
  */
 export function checkLeadTemplates(
   lead: LeadTextFields,

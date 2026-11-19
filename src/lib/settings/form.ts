@@ -12,9 +12,10 @@ function count(form: FormData, name: string): number {
 }
 
 /**
- * Reads the settings form. Every key of `aboutMe`, `templates`, `delays`, `caps`, `pacing` and `window` is always present, even when
- * the form leaves a field out: `saveSettings` merges its input over the defaults, so a missing key would be
- * silently reset to its default instead of rejected. The result is checked by `saveSettings`, hence `unknown`.
+ * Reads the settings form. Every key of `aboutMe`, `templates`, `delays`, `caps`, `pacing`, `window` and
+ * `founderInviteNote` is always present, even when the form leaves a field out: `saveSettings` merges its input
+ * over the defaults, so a missing key would be silently reset to its default instead of rejected. The result is
+ * checked by `saveSettings`, hence `unknown`.
  */
 export function formDataToSettings(form: FormData): unknown {
   const settings: Omit<Settings, 'templatesSaved'> = {
@@ -52,6 +53,8 @@ export function formDataToSettings(form: FormData): unknown {
       end: text(form, 'windowEnd'),
       timezone: text(form, 'timezone'),
     },
+    // A checkbox: ticked, it sends `template`; unticked, it sends nothing, which means the AI-written note.
+    founderInviteNote: text(form, 'founderInviteNote') === 'template' ? 'template' : 'draft',
   };
   return settings;
 }

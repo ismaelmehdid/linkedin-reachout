@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { settingsTable } from '@/db/schema';
 import type { Db } from '@/db/types';
 import { isInActiveWindow } from '@/lib/schedule/window';
 import { createTestDb } from '@/test-utils/db';
@@ -79,5 +80,27 @@ describe('settings repo', () => {
     const result = await saveSettings(db, { ...DEFAULT_SETTINGS, window: { ...DEFAULT_SETTINGS.window, ...patch } });
     expect(result.ok).toBe(false);
     expect(await getSettings(db)).toEqual(DEFAULT_SETTINGS);
+  });
+
+  it('keeps the founder note setting through a save and a read', async () => {
+    expect((await saveSettings(db, { ...DEFAULT_SETTINGS, founderInviteNote: 'template' })).ok).toBe(true);
+    expect((await getSettings(db)).founderInviteNote).toBe('template');
+    expect((await saveSettings(db, { ...DEFAULT_SETTINGS, founderInviteNote: 'draft' })).ok).toBe(true);
+    expect((await getSettings(db)).founderInviteNote).toBe('draft');
+  });
+
+  it('rejects an unknown founder note setting and stores nothing', async () => {
+    const result = await saveSettings(db, { ...DEFAULT_SETTINGS, founderInviteNote: 'both' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors[0]).toMatch(/^founderInviteNote: /);
+    expect(await getSettings(db)).toEqual(DEFAULT_SETTINGS);
+  });
+
+  // Settings saved before the setting existed have no such key: they keep sending the AI-written note.
+  it('reads a stored row without the founder note setting as draft', async () => {
+    const stored: Record<string, unknown> = { ...DEFAULT_SETTINGS, templatesSaved: true };
+    delete stored.founderInviteNote;
+    await db.insert(settingsTable).values({ id: 1, value: stored, updatedAt: new Date() });
+    expect(await getSettings(db)).toEqual({ ...DEFAULT_SETTINGS, templatesSaved: true, founderInviteNote: 'draft' });
   });
 });

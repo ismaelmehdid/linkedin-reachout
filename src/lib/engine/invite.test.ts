@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { leads, type Lead } from '@/db/schema';
+import type { Settings } from '@/lib/settings/settings';
 import { UnipileError } from '@/lib/unipile/errors';
 import { createTestEngine, getLead, listEvents, NOW, seedLead, type TestEngine } from '@/test-utils/engine';
 import { makeProfile } from '@/test-utils/fake-unipile';
@@ -281,6 +282,53 @@ describe('invite action', () => {
       lead = await seedAi({ firstMessageDraft: ' ' });
       expect((await runInviteAction(e.deps, lead, e.settings)).result).toBe('failed');
       expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'failed', failureReason: 'missing_draft' });
+    });
+    it('sends the note draft while Settings keeps the AI-written note', async () => {
+      expect((await runAi({}, { settings: (s) => ({ ...s, founderInviteNote: 'draft' }) })).result).toBe('invited');
+      expect(e.fake.calls.at(-1)).toEqual({ method: 'sendInvitation', args: ['ACoJane', NOTE] });
+    });
+
+    describe('while Settings sends the invite-note template to founders', () => {
+      const templateMode = (templates?: Partial<Settings['templates']>): Parameters<typeof createTestEngine>[0] => ({
+        templates,
+        settings: (s) => ({ ...s, founderInviteNote: 'template' }),
+      });
+
+      it('invites with the template rendered from the fetched profile, and logs that text', async () => {
+        // The stored first name is not the one sent: the profile fetched for this invite wins.
+        expect((await runAi({ firstName: 'Janet' }, templateMode())).result).toBe('invited');
+        expect(e.fake.calls).toEqual([{ method: 'getProfile', args: ['jane-ai'] }, { method: 'sendInvitation', args: ['ACoJane', 'Hi Jane from Acme'] }]);
+        expect((await listEvents(e.db)).at(-1)).toMatchObject({ type: 'invite_sent', leadId: lead.id, payload: { text: 'Hi Jane from Acme', dryRun: false } });
+        // The note draft is kept, not sent.
+        expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'invite_sent', firstName: 'Jane', inviteNoteDraft: NOTE, updatedAt: NOW });
+      });
+      it('fails with missing_variable and sends nothing when the template needs a value the profile lacks', async () => {
+        expect((await runAi({}, templateMode({ inviteNote: 'About {{position}}' }))).result).toBe('failed');
+        expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'failed', failureReason: 'missing_variable: position', failedFromStatus: 'queued' });
+        expect(methods()).toEqual(['getProfile']);
+        expect((await listEvents(e.db)).map((x) => x.type)).toEqual(['profile_view']);
+      });
+      it('invites a founder whose note draft is blank', async () => {
+        expect((await runAi({ inviteNoteDraft: null }, templateMode())).result).toBe('invited');
+        expect(e.fake.calls.at(-1)).toEqual({ method: 'sendInvitation', args: ['ACoJane', 'Hi Jane from Acme'] });
+      });
+      it('still fails with draft_not_approved and sends nothing when the drafts are not approved', async () => {
+        expect((await runAi({ draftStatus: 'ready' }, templateMode())).result).toBe('failed');
+        expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'failed', failureReason: 'draft_not_approved' });
+        expect(methods()).toEqual(['getProfile']);
+      });
+      it('still fails with missing_draft and sends nothing when the first message draft is blank', async () => {
+        expect((await runAi({ firstMessageDraft: ' ' }, templateMode())).result).toBe('failed');
+        expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'failed', failureReason: 'missing_draft', failedFromStatus: 'queued' });
+        expect(methods()).toEqual(['getProfile']);
+      });
+      it('sends no invite when the note draft changed during the profile fetch', async () => {
+        e = await createTestEngine(templateMode());
+        e.fake.onCall('getProfile', async () => { await e.db.update(leads).set({ inviteNoteDraft: 'A new note' }).where(eq(leads.id, lead.id)); });
+        expect((await runAi()).result).toBe('superseded');
+        expect(methods()).toEqual(['getProfile']);
+        expect(await getLead(e.db, lead.id)).toMatchObject({ status: 'queued', providerId: null, failureReason: null, inviteNoteDraft: 'A new note' });
+      });
     });
   });
 });

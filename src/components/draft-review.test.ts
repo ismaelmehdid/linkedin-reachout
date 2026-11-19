@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { canEditFirstMessage, canEditInviteNote, canRegenerate, canReview, notePreview, noteTooLong } from './draft-review';
+import {
+  canEditFirstMessage,
+  canEditInviteNote,
+  canRegenerate,
+  canReview,
+  noteNotSentNotice,
+  notePreview,
+  noteTooLong,
+  readyNotePreview,
+} from './draft-review';
 
 describe('draft review rules', () => {
   it('lets the note change only while the lead is queued', () => {
@@ -52,5 +61,25 @@ describe('draft review rules', () => {
     const preview = notePreview(`Hi Jane, ${'word '.repeat(30)}`);
     expect(preview.length).toBeLessThanOrEqual(61);
     expect(preview.endsWith('…')).toBe(true);
+  });
+
+  describe('while Settings sends the invite-note template to founders', () => {
+    const NOTICE = 'Not sent: the Invite note template in Settings is sent to uploaded founders.';
+
+    it('marks the note as not sent while it could still go out', () => {
+      expect(noteNotSentNotice('queued', true)).toBe(NOTICE);
+      // The invite is gone: what it carried is history, not a choice.
+      for (const status of ['invite_sent', 'already_connected', 'messaged', 'failed']) expect(noteNotSentNotice(status, true)).toBeNull();
+      expect(noteNotSentNotice('queued', false)).toBeNull();
+    });
+
+    it('previews a ready note only while that note is the one sent', () => {
+      const ready = { draftStatus: 'ready', inviteNoteDraft: 'Hi Jane, short note.' };
+      expect(readyNotePreview(ready, false)).toBe('Hi Jane, short note.');
+      expect(readyNotePreview(ready, true)).toBeNull();
+      expect(readyNotePreview({ ...ready, draftStatus: 'approved' }, false)).toBeNull();
+      expect(readyNotePreview({ ...ready, inviteNoteDraft: null }, false)).toBeNull();
+      expect(readyNotePreview({ ...ready, inviteNoteDraft: '' }, false)).toBeNull();
+    });
   });
 });
