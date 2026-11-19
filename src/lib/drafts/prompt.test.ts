@@ -12,6 +12,7 @@ const context: LeadContext = {
     website: 'https://acme.example',
     oneLiner: 'Robots that fold laundry',
     description: 'We build home robots.',
+    hiringDescription: 'Join a team of six.\n\nWe want engineers who ship robots, not slides.',
     teamSize: 7,
     jobs: [
       {
@@ -46,6 +47,9 @@ describe('buildDraftPrompt', () => {
     expect(developer).toContain('{{');
     expect(developer).toMatch(/placeholder/i);
     expect(developer).toMatch(/only.*facts/i);
+    // How to use the company's hiring pitch: as a guide, never as text to copy or as a fact about the owner.
+    expect(developer).toMatch(/hiring pitch/i);
+    expect(developer).toMatch(/do not copy/i);
     // The owner's own words and the founder's data belong in the user message only.
     expect(developer).not.toContain('Folsom');
     expect(developer).not.toContain('Acme');
@@ -66,6 +70,7 @@ describe('buildDraftPrompt', () => {
       'https://acme.example',
       'Robots that fold laundry',
       'We build home robots.',
+      'We want engineers who ship robots, not slides.',
       '7',
       'Founding Engineer',
       'founding_engineer',
@@ -84,6 +89,30 @@ describe('buildDraftPrompt', () => {
     expect(about).toBeLessThan(founder);
     expect(founder).toBeLessThan(company);
     expect(company).toBeLessThan(jobs);
+  });
+
+  it('gives the hiring pitch whole, under its own label, as the last line of the company section', () => {
+    const { user } = buildDraftPrompt(ABOUT_ME, context);
+    const company = user.slice(user.indexOf('## Company'), user.indexOf('## Open coding jobs')).trimEnd();
+    expect(company).toContain(
+      'Hiring pitch (what the company tells candidates): Join a team of six.\n\nWe want engineers who ship robots, not slides.',
+    );
+    // A pitch of several paragraphs comes last, so that no other field of the company follows it.
+    expect(company.endsWith('We want engineers who ship robots, not slides.')).toBe(true);
+  });
+
+  it('leaves the hiring pitch out when the company has none, and for a lead uploaded before it was kept', () => {
+    const none: LeadContext = { ...context, company: { ...context.company, hiringDescription: null } };
+    const blank: LeadContext = { ...context, company: { ...context.company, hiringDescription: '  ' } };
+    const older: LeadContext = { ...context, company: { ...context.company } };
+    delete older.company.hiringDescription;
+    for (const without of [none, blank, older]) {
+      const { user } = buildDraftPrompt(ABOUT_ME, without);
+      expect(user).not.toMatch(/hiring pitch/i);
+      expect(user).not.toContain('null');
+      expect(user).not.toContain('undefined');
+      expect(user).toContain('We build home robots.');
+    }
   });
 
   it('says plainly when the company has no coding job, and leaves out unknown fields', () => {

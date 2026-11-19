@@ -1,7 +1,13 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { JOB_DESCRIPTION_MAX_LENGTH, MAX_JOBS_PER_COMPANY, parseScraperFiles, type FounderRecord } from './scraper-files';
+import {
+  FOUNDER_RECORD_LIMITS,
+  JOB_DESCRIPTION_MAX_LENGTH,
+  MAX_JOBS_PER_COMPANY,
+  parseScraperFiles,
+  type FounderRecord,
+} from './scraper-files';
 
 type JsonJob = Record<string, unknown>;
 
@@ -75,6 +81,7 @@ const JANE: FounderRecord = {
       website: 'https://acme.dev',
       oneLiner: 'Rockets for everyone',
       description: 'Acme builds rockets.',
+      hiringDescription: 'We hire builders.',
       teamSize: 4,
       jobs: [ACME_JOB],
     },
@@ -157,6 +164,28 @@ describe('parseScraperFiles', () => {
     expect(record.context.company.jobs[0].description).toBe('x'.repeat(JOB_DESCRIPTION_MAX_LENGTH));
   });
 
+  it('cuts the hiring description to its first characters', () => {
+    const long = 'h'.repeat(FOUNDER_RECORD_LIMITS.hiringDescription + 500);
+    const [record] = parseScraperFiles([companiesFile({ acme: jsonCompany({ hiring_description: long }) })]).records;
+    expect(record.context.company.hiringDescription).toBe('h'.repeat(FOUNDER_RECORD_LIMITS.hiringDescription));
+  });
+
+  it('keeps a hiring description once when the scraper copied it into an empty description', () => {
+    // The scraper fills an empty `description` with the hiring description: both fields then hold the same text.
+    const fromJson = parseScraperFiles([
+      companiesFile({ acme: jsonCompany({ description: 'We hire builders.', hiring_description: ' We hire builders. ' }) }),
+    ]);
+    const fromCsv = parseScraperFiles([
+      foundersFile(ACME_FOUNDER_ROW.replace('Acme builds rockets.', 'We hire builders.')),
+      jobsFile(ACME_JOB_ROW),
+    ]);
+    for (const result of [fromJson, fromCsv]) {
+      expect(result.errors).toEqual([]);
+      expect(result.records[0].context.company.description).toBe('We hire builders.');
+      expect(result.records[0].context.company.hiringDescription).toBeNull();
+    }
+  });
+
   it('keeps at most the job limit per company', () => {
     const jobs = Array.from({ length: MAX_JOBS_PER_COMPANY + 5 }, (_, i) => jsonJob({ title: `Job ${i}` }));
     const [record] = parseScraperFiles([companiesFile({ acme: jsonCompany({ jobs }) })]).records;
@@ -169,6 +198,7 @@ describe('parseScraperFiles', () => {
       website: '',
       one_liner: '',
       description: '',
+      hiring_description: '',
       team_size: '12',
       founders: [{ name: 'Jane Doe', linkedin: 'https://linkedin.com/in/jane-doe', bio: '', past_companies: '' }],
       jobs: [jsonJob({ locations: [], remote: '', salary: '', equity: '', url: '' })],
@@ -187,6 +217,7 @@ describe('parseScraperFiles', () => {
         website: null,
         oneLiner: null,
         description: null,
+        hiringDescription: null,
         teamSize: 12,
         jobs: [
           {
@@ -239,6 +270,7 @@ describe('parseScraperFiles', () => {
             website: 'https://beta.dev',
             oneLiner: null,
             description: 'Beta does things.',
+            hiringDescription: null,
             teamSize: null,
             jobs: [
               {
@@ -314,6 +346,15 @@ describe('parseScraperFiles', () => {
     ]);
   });
 
+  it('refuses a founders CSV that has no hiring_description column', () => {
+    // Its founders would be imported without the hiring description, and the next upload would skip them.
+    const header = FOUNDERS_HEADER.replace(',hiring_description', '');
+    const row = ACME_FOUNDER_ROW.replace(',We hire builders.', '');
+    const result = parseScraperFiles([{ name: 'founders.csv', text: `${header}\r\n${row}\r\n` }]);
+    expect(result.records).toEqual([]);
+    expect(result.errors).toEqual(['founders.csv: missing column hiring_description']);
+  });
+
   it('says when jobs come without founders, and founders without jobs', () => {
     expect(parseScraperFiles([jobsFile(ACME_JOB_ROW)]).errors).toEqual([
       'No founders to import: add companies.json or founders.csv',
@@ -351,6 +392,18 @@ describe.skipIf(!hasSamples)('parseScraperFiles on the real sample files', () =>
     const csvJobs = jobsByFounder(fromCsv);
     for (const [url, jobs] of jobsByFounder(fromJson)) expect(csvJobs.get(url)).toEqual(jobs);
     expect(fromJson.records.some((r) => r.context.company.jobs.length > 0)).toBe(true);
+
+    const hiringByFounder = (result: typeof fromJson) =>
+      new Map(result.records.map((r) => [r.linkedinUrl, r.context.company.hiringDescription]));
+    const csvHiring = hiringByFounder(fromCsv);
+    for (const [url, hiring] of hiringByFounder(fromJson)) expect(csvHiring.get(url)).toBe(hiring);
+    expect(fromJson.records.some((r) => r.context.company.hiringDescription)).toBe(true);
+    // A hiring description that only repeats the description is dropped, so the two never hold the same text.
+    const repeated = fromJson.records.filter(
+      (r) => r.context.company.hiringDescription !== null && r.context.company.hiringDescription === r.context.company.description,
+    );
+    expect(repeated).toEqual([]);
+
     expect(fromAll.records).toEqual(fromJson.records);
   });
 });

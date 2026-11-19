@@ -1,7 +1,6 @@
 import { z } from 'zod';
-import type { LeadContext } from '@/db/schema';
 import type { Db } from '@/db/types';
-import { FOUNDER_RECORD_LIMITS as L, MAX_JOBS_PER_COMPANY } from '@/lib/import/scraper-files';
+import { FOUNDER_RECORD_LIMITS as L, MAX_JOBS_PER_COMPANY, type UploadedLeadContext } from '@/lib/import/scraper-files';
 import { addNewLeads, type LeadCandidate } from './import';
 import { parseLinkedInProfileUrl } from './url';
 
@@ -41,10 +40,13 @@ const contextSchema = z.strictObject({
     website: textOrNull(L.website),
     oneLiner: textOrNull(L.oneLiner),
     description: textOrNull(L.companyDescription),
+    // Required, though a stored `LeadContext` can lack it: a page loaded before the upload kept this text
+    // must not add founders without it, because the next upload skips them as already imported.
+    hiringDescription: textOrNull(L.hiringDescription),
     teamSize: z.number().int().min(0).max(L.teamSize).nullable(),
     jobs: z.array(jobSchema).max(MAX_JOBS_PER_COMPANY),
   }),
-}) satisfies z.ZodType<LeadContext>;
+}) satisfies z.ZodType<UploadedLeadContext>;
 
 const recordsSchema = z
   .array(z.strictObject({ linkedinUrl: text(L.linkedinUrl), context: contextSchema }))

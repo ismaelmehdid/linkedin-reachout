@@ -1,12 +1,13 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { leads, type LeadContext } from '@/db/schema';
+import { leads } from '@/db/schema';
 import type { Db } from '@/db/types';
 import {
   FOUNDER_RECORD_LIMITS,
   MAX_JOBS_PER_COMPANY,
   parseScraperFiles,
   type FounderRecord,
+  type UploadedLeadContext,
 } from '@/lib/import/scraper-files';
 import { UPLOAD_BATCH_MAX_BYTES, uploadBatches } from '@/lib/import/upload';
 import { createTestDb } from '@/test-utils/db';
@@ -14,7 +15,7 @@ import { importFounders, MAX_FOUNDERS_PER_IMPORT } from './import-founders';
 
 const NOW = new Date('2026-11-17T09:00:00Z');
 
-const context = (founderName: string, patch: Partial<LeadContext['company']> = {}): LeadContext => ({
+const context = (founderName: string, patch: Partial<UploadedLeadContext['company']> = {}): UploadedLeadContext => ({
   founder: { name: founderName, bio: 'Builds things.', pastCompanies: null },
   company: {
     name: 'Acme',
@@ -22,6 +23,7 @@ const context = (founderName: string, patch: Partial<LeadContext['company']> = {
     website: 'https://acme.dev',
     oneLiner: null,
     description: 'Rockets.',
+    hiringDescription: 'We hire builders.',
     teamSize: 4,
     jobs: [
       {
@@ -98,6 +100,26 @@ describe('importFounders', () => {
     ]);
   });
 
+  it('keeps a company without a hiring description, as null', async () => {
+    await importFounders(
+      db,
+      [{ linkedinUrl: 'linkedin.com/in/a', context: context('Jane Doe', { hiringDescription: null }) }],
+      NOW,
+    );
+    const [row] = await db.select().from(leads);
+    expect(row.context?.company).toHaveProperty('hiringDescription', null);
+  });
+
+  it('refuses a record that has no hiring description field', async () => {
+    // What a page loaded before the field existed sends. Adding that founder would lose the text for good:
+    // the next upload skips the founder as already imported.
+    const company: Record<string, unknown> = { ...context('Jane Doe').company };
+    delete company.hiringDescription;
+    const stale = [{ linkedinUrl: 'linkedin.com/in/a', context: { ...context('Jane Doe'), company } }];
+    await expect(importFounders(db, stale, NOW)).rejects.toThrow();
+    expect(await db.select().from(leads)).toHaveLength(0);
+  });
+
   it('leaves both names empty for a founder with a blank name', async () => {
     await importFounders(db, [record('linkedin.com/in/anon', '  ')], NOW);
     const [row] = await db.select().from(leads);
@@ -166,6 +188,12 @@ describe('importFounders', () => {
           context: context('Jane', {
             jobs: [{ ...context('Jane').company.jobs[0], description: tooLong(FOUNDER_RECORD_LIMITS.jobDescription) }],
           }),
+        },
+      ],
+      [
+        {
+          linkedinUrl: 'linkedin.com/in/a',
+          context: context('Jane', { hiringDescription: tooLong(FOUNDER_RECORD_LIMITS.hiringDescription) }),
         },
       ],
       [{ linkedinUrl: 'linkedin.com/in/a', context: context('Jane', { teamSize: -1 }) }],

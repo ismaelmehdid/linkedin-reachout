@@ -6,7 +6,16 @@ const record = (url: string, description = ''): FounderRecord => ({
   linkedinUrl: url,
   context: {
     founder: { name: 'Jane Doe', bio: null, pastCompanies: null },
-    company: { name: 'Acme', batch: null, website: null, oneLiner: null, description, teamSize: null, jobs: [] },
+    company: {
+      name: 'Acme',
+      batch: null,
+      website: null,
+      oneLiner: null,
+      description,
+      hiringDescription: null,
+      teamSize: null,
+      jobs: [],
+    },
   },
 });
 

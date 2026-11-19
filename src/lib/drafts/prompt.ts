@@ -24,6 +24,7 @@ const DEVELOPER_MESSAGE = `You write two LinkedIn messages from the sender descr
 Both messages:
 - Written in English.
 - Use only facts from "About me" and from the founder and company sections. Invent nothing: no shared history, no mutual friends, no compliments on things you were not told, no numbers you were not given.
+- The company section can hold a hiring pitch: what the company tells candidates about itself and the people it wants. Use it to choose the hook and what to say about the sender. Do not copy its sentences, and claim nothing about the sender that "About me" does not state.
 - Plain, warm and direct. Not salesy: no buzzwords, no flattery, no marketing tone. Short sentences a person would type.
 - No emoji, no hashtags, no links or URLs, no em dashes (use commas or periods instead).
 - No {{, no brackets, no placeholders: every word is final text ready to send.
@@ -62,6 +63,8 @@ export function buildDraftPrompt(aboutMe: string, context: LeadContext, opts: { 
       line('Description', company.description),
       line('Team size', company.teamSize),
       line('Website', company.website),
+      // Last: it can run to several paragraphs, and no other field of the company should follow them.
+      line('Hiring pitch (what the company tells candidates)', company.hiringDescription),
     )}`,
     company.jobs.length === 0
       ? '## Open coding jobs\nThe company has no open coding job. Write about the company and name no job.'

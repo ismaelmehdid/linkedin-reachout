@@ -68,6 +68,11 @@ export type LeadContext = {
     website: string | null;
     oneLiner: string | null;
     description: string | null;
+    /**
+     * What the company tells candidates. Null when it has none, or when it only repeats the description.
+     * A lead uploaded before the upload kept this text has no such field.
+     */
+    hiringDescription?: string | null;
     teamSize: number | null;
     jobs: LeadContextJob[];
   };

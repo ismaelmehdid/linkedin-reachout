@@ -36,6 +36,7 @@ export const FOUNDER_RECORD_LIMITS = {
   website: 500,
   oneLiner: 500,
   companyDescription: 4000,
+  hiringDescription: 4000,
   jobTitle: 300,
   jobCategory: 100,
   jobLocation: 1000,
@@ -47,7 +48,13 @@ export const FOUNDER_RECORD_LIMITS = {
   teamSize: 10_000_000,
 } as const;
 
-export type FounderRecord = { linkedinUrl: string; context: LeadContext };
+/**
+ * The context the upload makes. A stored `LeadContext` can lack `hiringDescription` (a lead uploaded before
+ * that text was kept); an uploaded one always says whether the company has one.
+ */
+export type UploadedLeadContext = LeadContext & { company: { hiringDescription: string | null } };
+
+export type FounderRecord = { linkedinUrl: string; context: UploadedLeadContext };
 
 export type ScraperFilesResult = {
   records: FounderRecord[];
@@ -57,11 +64,13 @@ export type ScraperFilesResult = {
 };
 
 type Founder = { name: string; linkedin: string; bio: string | null; pastCompanies: string | null };
-type Company = Omit<LeadContext['company'], 'jobs'> & { jobs: LeadContextJob[]; founders: Founder[] };
+type Company = Omit<UploadedLeadContext['company'], 'jobs'> & { jobs: LeadContextJob[]; founders: Founder[] };
 
 const L = FOUNDER_RECORD_LIMITS;
 const NOT_RECOGNISED = 'not a companies.json, founders.csv or jobs.csv file';
-const FOUNDER_COLUMNS = ['company', 'founder_name', 'linkedin'];
+// `hiring_description` is needed even when its cells are empty: a file without the column would give its
+// founders no hiring description, and the next upload skips them as already imported.
+const FOUNDER_COLUMNS = ['company', 'founder_name', 'linkedin', 'hiring_description'];
 const JOB_COLUMNS = ['company', 'job_title', 'category'];
 
 /** Cuts `value` to `max` characters, without splitting a surrogate pair. */
@@ -87,6 +96,18 @@ function teamSize(value: unknown): number | null {
 }
 
 const isCodingCategory = (category: string) => CODING_JOB_CATEGORIES.includes(category);
+
+/**
+ * A company's description and hiring description. The scraper fills an empty `description` with the hiring
+ * description: when both hold the same text, it is kept once, as the description.
+ */
+function companyTexts(description: unknown, hiringDescription: unknown) {
+  const repeated = asText(hiringDescription).trim() === asText(description).trim();
+  return {
+    description: textOrNull(description, L.companyDescription),
+    hiringDescription: repeated ? null : textOrNull(hiringDescription, L.hiringDescription),
+  };
+}
 
 function makeJob(fields: {
   title: unknown;
@@ -142,7 +163,7 @@ function readCompaniesJson(raw: string): Company[] | null {
       batch: textOrNull(c.batch, L.batch),
       website: textOrNull(c.website, L.website),
       oneLiner: textOrNull(c.one_liner, L.oneLiner),
-      description: textOrNull(c.description, L.companyDescription),
+      ...companyTexts(c.description, c.hiring_description),
       teamSize: teamSize(c.team_size),
       founders: asArray(c.founders)
         .filter(isObject)
@@ -236,7 +257,7 @@ export function parseScraperFiles(files: { name: string; text: string }[]): Scra
         batch: textOrNull(row.batch, L.batch),
         website: textOrNull(row.website, L.website),
         oneLiner: textOrNull(row.one_liner, L.oneLiner),
-        description: textOrNull(row.description, L.companyDescription),
+        ...companyTexts(row.description, row.hiring_description),
         teamSize: null,
         founders: [],
         // The join is on the exact company name, the same text the scraper wrote to both files.
